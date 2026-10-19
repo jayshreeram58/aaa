@@ -3181,6 +3181,16 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                         pdf_msg_id=pdf_msg_id,
                         pdf_url=clean_res_url if is_direct_pdf_url(item.url) else None
                     )
+
+                    # Progressive Sync: Push updated JSON after every 3 successful items so progress is saved in real-time
+                    if (i + 1) % 3 == 0:
+                        try:
+                            CourseWallahPlatformSync.push_to_github(
+                                app_slug=getattr(job, "app_id", "physics_wallah"),
+                                batch_slug=b_name
+                            )
+                        except Exception as prog_e:
+                            logger.debug(f"[CourseWallahSync] Progressive push notice: {prog_e}")
                 except Exception as sync_e:
                     logger.warning(f"[CourseWallahSync] Error syncing item {i+1}: {sync_e}")
             else:

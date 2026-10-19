@@ -391,35 +391,44 @@ class CourseWallahPlatformSync:
         idx_file = LOCAL_DATA_DIR / safe_app / "batches_index.json"
 
         if not bf.exists():
+            logger.warning(f"Batch file '{bf}' does not exist; cannot push to GitHub.")
             return False
 
         try:
             with open(bf, "r", encoding="utf-8") as fp:
                 b_content = json.load(fp)
 
-            cls._github_put_file(
+            ok1 = cls._github_put_file(
                 file_path=f"data/{safe_app}/batches/{safe_b}.json",
                 content=b_content,
                 commit_msg=f"feat(stream): sync batch {safe_b} in {safe_app} with live Telegram stream URLs"
             )
 
+            ok2 = True
             if idx_file.exists():
                 with open(idx_file, "r", encoding="utf-8") as fp:
                     idx_content = json.load(fp)
-                cls._github_put_file(
+                ok2 = cls._github_put_file(
                     file_path=f"data/{safe_app}/batches_index.json",
                     content=idx_content,
                     commit_msg=f"feat(catalog): update batches index for {safe_app}"
                 )
 
-            logger.info(f"🚀 Pushed batch '{safe_b}' JSON to GitHub: {GITHUB_REPO} ({GITHUB_BRANCH})")
-            return True
+            if ok1 and ok2:
+                logger.info(f"🚀 Pushed batch '{safe_b}' JSON to GitHub: {GITHUB_REPO} ({GITHUB_BRANCH})")
+                return True
+            else:
+                logger.warning(f"⚠️ GitHub sync failed for '{safe_b}'. Data remains saved locally.")
+                return False
         except Exception as e:
             logger.warning(f"Failed to push batch to GitHub: {e}")
             return False
 
     @classmethod
-    def _github_put_file(cls, file_path: str, content: Any, commit_msg: str):
+    def _github_put_file(cls, file_path: str, content: Any, commit_msg: str) -> bool:
+        if not GITHUB_TOKEN:
+            return False
+
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{file_path}"
         headers = {
             "Authorization": f"Bearer {GITHUB_TOKEN}",
@@ -429,9 +438,17 @@ class CourseWallahPlatformSync:
 
         # Check existing SHA
         sha = None
-        r = requests.get(f"{url}?ref={GITHUB_BRANCH}", headers=headers, timeout=15)
-        if r.status_code == 200:
-            sha = r.json().get("sha")
+        try:
+            r = requests.get(f"{url}?ref={GITHUB_BRANCH}", headers=headers, timeout=15)
+            if r.status_code == 200:
+                sha = r.json().get("sha")
+            elif r.status_code == 401:
+                logger.error("❌ GitHub Token Authentication Failed (401 Bad credentials). Please verify your GITHUB_TOKEN in Colab / environment.")
+                return False
+            elif r.status_code == 404:
+                sha = None  # New file
+        except Exception as ge:
+            logger.warning(f"Error fetching existing GitHub SHA for {file_path}: {ge}")
 
         b64_content = base64.b64encode(json.dumps(content, indent=2, ensure_ascii=False).encode("utf-8")).decode("utf-8")
         payload = {
@@ -442,6 +459,17 @@ class CourseWallahPlatformSync:
         if sha:
             payload["sha"] = sha
 
-        resp = requests.put(url, headers=headers, json=payload, timeout=25)
-        if resp.status_code not in (200, 201):
-            logger.warning(f"GitHub PUT {file_path} returned {resp.status_code}: {resp.text}")
+        try:
+            resp = requests.put(url, headers=headers, json=payload, timeout=25)
+            if resp.status_code in (200, 201):
+                logger.debug(f"GitHub PUT {file_path} succeeded ({resp.status_code})")
+                return True
+            elif resp.status_code == 401:
+                logger.error(f"❌ GitHub Authentication Failed (401 Bad credentials) on PUT {file_path}. GITHUB_TOKEN is expired or invalid.")
+                return False
+            else:
+                logger.warning(f"GitHub PUT {file_path} returned {resp.status_code}: {resp.text}")
+                return False
+        except Exception as pe:
+            logger.warning(f"GitHub PUT request exception for {file_path}: {pe}")
+            return False
