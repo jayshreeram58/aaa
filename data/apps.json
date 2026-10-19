@@ -1,0 +1,44 @@
+[
+  {
+    "id": "physics_wallah",
+    "name": "Physics Wallah",
+    "description": "JEE, NEET, Boards & Foundation Batches",
+    "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/pw_brand_icon.jpg"
+  },
+  {
+    "id": "selection_way",
+    "name": "Selection Way",
+    "description": "SSC, Railway, Banking, Police Exam Preparation",
+    "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/selection_way_brand_icon.svg"
+  },
+  {
+    "id": "unacademy",
+    "name": "Unacademy",
+    "description": "IIT JEE, NEET UG, GATE & UPSC Classes",
+    "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/unacademy_brand_icon.jpg"
+  },
+  {
+    "id": "apna_college",
+    "name": "Apna College",
+    "description": "Delta Web Dev, Alpha & Sigma DSA Courses",
+    "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/apna_college_brand_icon.jpg"
+  },
+  {
+    "id": "technical_classes",
+    "name": "Technical Classes",
+    "description": "Polytechnic & Engineering Semester Courses",
+    "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/technical_classes_brand_icon.svg"
+  },
+  {
+    "id": "storytv",
+    "name": "StoryTV",
+    "description": "Vertical Reels Micro-Series & Short Dramas",
+    "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/storytv_brand_icon.svg"
+  },
+  {
+    "id": "sonyliv",
+    "name": "SonyLIV",
+    "description": "Entertainment Shows, Sitcoms & Originals",
+    "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/sonyliv_brand_icon.svg"
+  }
+]

@@ -40,6 +40,8 @@ class JobCheckpoint:
     current_item_title: str = ""
     phase: str = "QUEUED"  # QUEUED, DOWNLOADING, PROCESSING, UPLOADING, DONE
     status: str = "QUEUED"  # QUEUED, DOWNLOADING, PROCESSING, UPLOADING, PAUSED, CANCELLED, COMPLETED, FAILED, RECOVERING
+    app_id: str = "physics_wallah"
+    app_name: str = "Physics Wallah"
     batch_name: str = ""
     quality: str = "720p"
     watermark: str = "/d"
@@ -136,6 +138,8 @@ class JobManager:
         raw_content: str,
         total_items: int,
         start_index: int = 1,
+        app_id: str = "physics_wallah",
+        app_name: str = "Physics Wallah",
         batch_name: str = "",
         quality: str = "720p",
         watermark: str = "/d",
@@ -164,6 +168,8 @@ class JobManager:
             bot_id=effective_bot_id,
             bot_username=bot_username,
             current_index=max(0, start_index - 1),
+            app_id=app_id or "physics_wallah",
+            app_name=app_name or "Physics Wallah",
             batch_name=batch_name,
             quality=quality,
             watermark=watermark,
