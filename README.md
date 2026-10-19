@@ -21,6 +21,7 @@ Deploy your own instance in less than 60 seconds with full persistence and healt
 
 | Platform | One-Click Deployment Button | Supported Tier | Storage Model |
 | :--- | :---: | :---: | :---: |
+| **Google Colab** | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ramjipatel-tech/course-wallah-downloader-bot/blob/main/CourseWallah_Downloader_Colab.ipynb) | Free Tier (CPU/T4) | 100GB Disk + 1Gbps Cloud Net |
 | **Railway** | [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2Framjipatel-tech%2Fcourse-wallah-downloader-bot) | Free Trial / Hobby / Pro | Persistent Volume (`/data`) |
 | **Render** | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ramjipatel-tech/course-wallah-downloader-bot) | Starter Worker / Standard | Persistent Disk (`/data`) |
 | **Heroku** | [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/ramjipatel-tech/course-wallah-downloader-bot) | Eco / Basic / Standard | Ephemeral Container |
