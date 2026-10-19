@@ -3279,6 +3279,8 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
             for fpath in temp_files_to_clean:
                 if fpath:
                     cleanup_uploaded_file(fpath)
+            import gc
+            gc.collect()
 
     # Finalize job status
     if len(job.completed_indices) + len(job.failed_indices) >= total_items:
