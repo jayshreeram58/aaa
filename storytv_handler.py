@@ -234,7 +234,7 @@ def download_video_stream(stream_url: str, output_path: Path) -> bool:
         "yt-dlp",
         "--quiet",
         "--no-warnings",
-        "-f", "bestvideo[height<=720]+bestaudio/bv*+ba/b",
+        "-f", "bestvideo[height<=1080]+bestaudio[abr>=128]/bestvideo+bestaudio/best",
         "--merge-output-format", "mp4",
         "-o", str(output_path),
         stream_url,
@@ -471,7 +471,7 @@ async def storytv_cmd(client: Client, message: Message):
                     caption = (
                         f"🎬 <b>{show_title}</b> — Episode {ep_idx}\n"
                         f"⚡ <b>Series:</b> {genre}\n"
-                        f"📺 <b>Quality:</b> 720p HD Reel | 9:16\n"
+                        f"📺 <b>Quality:</b> 1080p Full HD Reel | 9:16\n"
                         f"🆔 <b>Show ID:</b> <code>{show_id}</code> &bull; <b>Episode:</b> {sub_txt}\n\n"
                         f"🍿 <i>Uploaded via Course Wallah Bot</i>"
                     )
