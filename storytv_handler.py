@@ -52,6 +52,51 @@ DEFAULT_JWT = (
 # Global stop flag
 _STOP_REQUESTED = False
 
+# =========================================================================
+# HELPER FUNCTIONS: PROGRESS BAR, FORMATTERS, SESSIONS
+# =========================================================================
+
+def make_progress_bar(percent: float, bar_length: int = 12) -> str:
+    """Generates clean ASCII progress bar with filled and empty characters."""
+    pct = max(0.0, min(100.0, float(percent)))
+    filled = int(round(bar_length * (pct / 100.0)))
+    unfilled = bar_length - filled
+    return "█" * filled + "░" * unfilled
+
+def hrb(value: Optional[float | int], digits: int = 2) -> str:
+    """Formats bytes to human readable string (KB, MB, GB)."""
+    if value is None:
+        return "0 B"
+    try:
+        val = float(value)
+    except (ValueError, TypeError):
+        return "0 B"
+
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(val) < 1024.0:
+            return f"{val:.{digits}f} {unit}" if unit != "B" else f"{int(val)} {unit}"
+        val /= 1024.0
+    return f"{val:.{digits}f} PB"
+
+def hrt(seconds: Optional[float | int]) -> str:
+    """Formats seconds to human readable time string (e.g. 02m 45s, 01h 12m)."""
+    if seconds is None or seconds < 0:
+        return "00s"
+    try:
+        sec = int(seconds)
+    except (ValueError, TypeError):
+        return "00s"
+
+    hours = sec // 3600
+    minutes = (sec % 3600) // 60
+    rem_sec = sec % 60
+
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m {rem_sec:02d}s"
+    if minutes > 0:
+        return f"{minutes:02d}m {rem_sec:02d}s"
+    return f"{rem_sec:02d}s"
+
 def get_active_jwt() -> str:
     """Reads fresh active JWT from session file or returns verified fallback."""
     if SESSION_PATH.exists():
@@ -86,11 +131,7 @@ def get_headers() -> Dict[str, str]:
 # =========================================================================
 
 def load_all_catalog_shows() -> List[Dict[str, Any]]:
-    """
-    Loads all catalog shows (1,215 shows).
-    Checks local file first; if missing (e.g. in fresh Colab clone),
-    can load from fallback index.
-    """
+    """Loads all catalog shows (1,215 shows)."""
     if CATALOG_PATH.exists():
         try:
             with open(CATALOG_PATH, "r", encoding="utf-8") as f:
@@ -100,7 +141,6 @@ def load_all_catalog_shows() -> List[Dict[str, Any]]:
         except Exception as e:
             logger.error(f"Error loading catalog from {CATALOG_PATH}: {e}")
 
-    # Fallback to local data/shows_index.json if exists
     alt_index = BASE_DIR / "data" / "shows_index.json"
     if alt_index.exists():
         try:
@@ -168,7 +208,6 @@ def save_show_json_data(show_id: str, show_obj: Dict[str, Any]):
     if EXPERIMENT_API_DIR.exists():
         dest_dirs.append(EXPERIMENT_SHOWS_DIR)
 
-    # Google Drive Mirror on Colab (if mounted)
     colab_drive_dir = Path("/content/drive/MyDrive/course_wallah_storytv/data/shows")
     if Path("/content/drive/MyDrive").exists():
         dest_dirs.append(colab_drive_dir)
@@ -221,32 +260,90 @@ def fetch_show_episodes_page(show_id: str, cursor: Optional[int] = None) -> List
     return []
 
 # =========================================================================
-# VIDEO DOWNLOADER (yt-dlp)
+# FAST MULTI-THREADED DOWNLOADER WITH LIVE PERCENTAGE PROGRESS
 # =========================================================================
 
-def download_video_stream(stream_url: str, output_path: Path) -> bool:
+async def download_video_stream_with_progress(
+    stream_url: str,
+    output_path: Path,
+    status_message: Optional[Message],
+    show_title: str,
+    ep_idx: int,
+    total_eps: int,
+    target_channel_id: int
+) -> bool:
     """
-    Downloads an HLS stream to an MP4 video file using yt-dlp.
-    Handles separate audio+video manifests (bv*+ba/b).
+    Downloads HLS stream in 1080p Full HD using yt-dlp with 16 parallel fragment threads.
+    Streams real-time download progress (percentage, speed, ETA, total size) directly
+    to the Telegram editable status card.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "yt-dlp",
-        "--quiet",
+        "--newline",
         "--no-warnings",
+        "--concurrent-fragments", "16",  # 16x parallel accelerators for maximum speed
         "-f", "bestvideo[height<=1080]+bestaudio[abr>=128]/bestvideo+bestaudio/best",
         "--merge-output-format", "mp4",
         "-o", str(output_path),
         stream_url,
     ]
+
     try:
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=240, check=False)
-        if output_path.exists() and output_path.stat().st_size > 50000:
-            return True
-        logger.warning(f"yt-dlp download stderr: {res.stderr.decode('utf-8', 'ignore')[:200]}")
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT
+        )
+
+        last_edit = 0.0
+
+        while True:
+            line_bytes = await proc.stdout.readline()
+            if not line_bytes:
+                break
+            line = line_bytes.decode("utf-8", "ignore").strip()
+
+            # Parse yt-dlp progress: [download]  56.3% of ~  24.41MiB at    3.77MiB/s ETA 00:09
+            m = re.search(r"\[download\]\s+(\d+(?:\.\d+)?)%\s+of\s+~?\s*([\d\.]+[A-Za-z]+)\s+at\s+([\d\.]+[A-Za-z]+/s)\s+ETA\s+([\d:]+)", line)
+            if m and status_message:
+                pct = float(m.group(1))
+                tot_str = m.group(2)
+                spd_str = m.group(3)
+                eta_str = m.group(4)
+
+                now = time.time()
+                if now - last_edit >= 2.0:
+                    last_edit = now
+                    bar = make_progress_bar(pct, bar_length=12)
+                    card = (
+                        "╭────────────────────────────╮\n"
+                        "│      🎬 <b>STORY TV VIP</b>        │\n"
+                        "│                            │\n"
+                        "│    📥 <b>DOWNLOADING 1080p</b>     │\n"
+                        "│                            │\n"
+                        f"│ 📺 <b>Show:</b> {show_title[:28]}\n"
+                        f"│ 🎬 <b>Episode:</b> {ep_idx}/{total_eps}\n"
+                        f"│ <code>{bar}</code> <b>{pct:5.1f}%</b>\n"
+                        f"│ ⚡ <b>Speed:</b> {spd_str} | ⏱️ <b>ETA:</b> {eta_str}\n"
+                        f"│ 💾 <b>Size:</b> {tot_str}\n"
+                        "│                            │\n"
+                        f"│ 🚀 <b>Quality:</b> 1080p Full HD (16x Threads)\n"
+                        f"│ 📢 <b>Channel:</b> <code>{target_channel_id}</code>\n"
+                        "│ 🛑 <i>Send /stopstorytv to pause</i>\n"
+                        "╰────────────────────────────╯"
+                    )
+                    try:
+                        await status_message.edit_text(card)
+                    except Exception:
+                        pass
+
+        await proc.wait()
+        return proc.returncode == 0 and output_path.exists() and output_path.stat().st_size > 50000
+
     except Exception as e:
-        logger.error(f"yt-dlp download failed: {e}")
-    return False
+        logger.error(f"Async yt-dlp download failed: {e}")
+        return False
 
 # =========================================================================
 # TELEGRAM COMMAND HANDLERS: /storytv & /stopstorytv
@@ -266,11 +363,11 @@ async def storytv_cmd(client: Client, message: Message):
     """
     Automated StoryTV Downloader & Channel Uploader:
     - User gives /storytv (optionally with Channel ID, or prompted ONCE for Channel ID).
-    - Automatically processes all 1,215 shows sequentially.
-    - Zero manual intervention per show or per episode.
+    - Automatically processes all 1,215 shows sequentially in 1080p Full HD.
+    - Shows LIVE real-time percentage progress for both downloading and uploading!
     - Smart Deduplication: Checks {showId}.json on disk.
       - If an episode already has a telegramMessageId or telegramUrl, it is SKIPPED instantly!
-      - If pending, it downloads and uploads it to the Channel, and writes to {showId}.json immediately.
+      - If pending, it downloads at maximum speed (16x parallel fragments) and uploads to the Channel.
     - If the bot stops or crashes, re-running /storytv resumes seamlessly with NO duplicates!
     """
     global _STOP_REQUESTED
@@ -286,7 +383,6 @@ async def storytv_cmd(client: Client, message: Message):
     target_channel_id = None
     target_single_show_id = None
 
-    # Check if arg_1 is channel ID (starts with -100 or negative number)
     if arg_1.startswith("-100") or (arg_1.startswith("-") and arg_1[1:].isdigit()):
         target_channel_id = int(arg_1)
     elif arg_1.isdigit() and len(arg_1) > 8:
@@ -306,19 +402,19 @@ async def storytv_cmd(client: Client, message: Message):
                 pass
 
     editable = await message.reply_text(
-        "🎬 <b>StoryTV Automated Downloader & Channel Uploader</b>\n\n"
-        "<i>Initializing automated engine & verifying catalog...</i>"
+        "🎬 <b>StoryTV High-Speed 1080p Downloader & Channel Uploader</b>\n\n"
+        "<i>Initializing 16x parallel accelerator & checking catalog...</i>"
     )
 
     try:
-        # STEP 1: If Channel ID is not yet known, prompt ONCE
+        # STEP 1: Prompt ONCE if Channel ID is unknown
         if not target_channel_id:
             await editable.edit_text(
-                "🎬 <b>StoryTV Automated Downloader Engine</b>\n\n"
+                "🎬 <b>StoryTV High-Speed 1080p Engine</b>\n\n"
                 "<blockquote>📢 <b>Send Destination Telegram Channel ID</b>:\n"
                 "<i>Example: <code>-1002233445566</code> (Bot must be Admin with Post permission)\n"
                 "Or send <code>/d</code> to upload right in this chat.</i></blockquote>\n\n"
-                "<i>⚡ Once provided, the bot will run completely autonomously for all shows and skip already uploaded episodes!</i>"
+                "<i>⚡ Once provided, the bot will run completely autonomously for all shows in 1080p Full HD!</i>"
             )
             ch_msg = await client.listen(chat_id=chat_id, user_id=user_id, timeout=120)
             ch_text = ch_msg.text.strip()
@@ -356,17 +452,17 @@ async def storytv_cmd(client: Client, message: Message):
         clean_ch_id = str(target_channel_id).replace("-100", "")
 
         await editable.edit_text(
-            f"🚀 <b>StoryTV Autonomous Downloader Started!</b>\n\n"
+            f"🚀 <b>StoryTV High-Speed 1080p Engine Started!</b>\n\n"
             f"📚 <b>Total Shows in Queue:</b> {total_shows}\n"
+            f"🌟 <b>Quality:</b> 1080p Full HD (Crisp, High Bitrate + 128k AAC)\n"
+            f"⚡ <b>Speed Boost:</b> 16x Parallel Fragment Threads Enabled\n"
             f"📢 <b>Target Channel ID:</b> <code>{target_channel_id}</code>\n"
-            f"🛡️ <b>Smart JSON Deduplication:</b> Enabled (Skips completed episodes instantly)\n"
-            f"🛑 <i>Send /stopstorytv anytime to pause safely.</i>\n\n"
-            f"<i>Starting sequential download & upload loop...</i>"
+            f"🛡️ <b>Smart JSON Deduplication:</b> Enabled\n"
+            f"🛑 <i>Send /stopstorytv anytime to pause safely.</i>"
         )
 
         global_uploaded = 0
         global_skipped = 0
-        last_progress_edit = time.time()
 
         # =========================================================================
         # AUTONOMOUS SHOW ITERATION LOOP
@@ -396,22 +492,6 @@ async def storytv_cmd(client: Client, message: Message):
                 global_skipped += catalog_total_eps
                 logger.info(f"Show '{show_title}' ({show_id}) already complete ({len(existing_uploaded)}/{catalog_total_eps}). Skipping.")
                 continue
-
-            # Update live status card periodically
-            now = time.time()
-            if now - last_progress_edit > 6:
-                last_progress_edit = now
-                try:
-                    await editable.edit_text(
-                        f"🎬 <b>StoryTV Engine Running ({show_idx}/{total_shows} Shows)</b>\n\n"
-                        f"📺 <b>Current Show:</b> <b>{show_title}</b> (ID: <code>{show_id}</code>)\n"
-                        f"📊 <b>Show Progress:</b> {len(existing_uploaded)}/{catalog_total_eps or '?'} Episodes Uploaded\n"
-                        f"⚡ <b>Session Uploaded:</b> {global_uploaded} | ⏭️ <b>Total Skipped:</b> {global_skipped}\n"
-                        f"📢 <b>Channel:</b> <code>{target_channel_id}</code>\n"
-                        f"🛑 <i>Send /stopstorytv to pause anytime.</i>"
-                    )
-                except Exception:
-                    pass
 
             # 2. Page through episodes for this show
             cursor: Optional[int] = None
@@ -450,7 +530,7 @@ async def storytv_cmd(client: Client, message: Message):
                     sub_txt = target_meta.get("subTxt", f"{ep_idx}/{catalog_total_eps or '?'}")
                     thumb_url = target_meta.get("thumb", "")
 
-                    # Download video file locally
+                    # Setup local temp files
                     temp_video_file = TEMP_DOWNLOAD_DIR / f"{show_id}_ep_{ep_idx}_{int(time.time())}.mp4"
                     temp_thumb_file = TEMP_DOWNLOAD_DIR / f"{show_id}_thumb_{ep_idx}.jpg"
 
@@ -460,21 +540,74 @@ async def storytv_cmd(client: Client, message: Message):
                         except Exception:
                             pass
 
-                    download_ok = download_video_stream(stream_url, temp_video_file)
+                    # -------------------------------------------------------------
+                    # PHASE 1: HIGH-SPEED DOWNLOAD WITH REAL-TIME PROGRESS
+                    # -------------------------------------------------------------
+                    download_ok = await download_video_stream_with_progress(
+                        stream_url=stream_url,
+                        output_path=temp_video_file,
+                        status_message=editable,
+                        show_title=show_title,
+                        ep_idx=ep_idx,
+                        total_eps=catalog_total_eps or "?",
+                        target_channel_id=target_channel_id
+                    )
+
                     if not download_ok or not temp_video_file.exists():
                         if temp_thumb_file.exists():
                             try: temp_thumb_file.unlink()
                             except Exception: pass
                         continue
 
-                    # Upload to Telegram Channel
+                    # -------------------------------------------------------------
+                    # PHASE 2: TELEGRAM UPLOAD WITH REAL-TIME PROGRESS
+                    # -------------------------------------------------------------
                     caption = (
                         f"🎬 <b>{show_title}</b> — Episode {ep_idx}\n"
                         f"⚡ <b>Series:</b> {genre}\n"
-                        f"📺 <b>Quality:</b> 1080p Full HD Reel | 9:16\n"
+                        f"📺 <b>Quality:</b> 1080p Full HD Reel (Crisp) | 9:16\n"
                         f"🆔 <b>Show ID:</b> <code>{show_id}</code> &bull; <b>Episode:</b> {sub_txt}\n\n"
                         f"🍿 <i>Uploaded via Course Wallah Bot</i>"
                     )
+
+                    last_upload_edit = [0.0]
+                    upload_start_time = [time.time()]
+
+                    async def upload_progress_cb(current, total):
+                        now = time.time()
+                        if now - last_upload_edit[0] < 2.0 or total <= 0:
+                            return
+                        last_upload_edit[0] = now
+
+                        elapsed = now - upload_start_time[0]
+                        speed = current / elapsed if elapsed > 0.5 else 0.0
+                        pct = (current / total) * 100.0
+                        bar = make_progress_bar(pct, bar_length=12)
+                        spd_str = f"{hrb(speed)}/s" if speed > 0 else "0 B/s"
+                        rem_sec = int((total - current) / speed) if speed > 0 else 0
+                        eta_str = hrt(rem_sec) if rem_sec > 0 else "00s"
+
+                        card = (
+                            "╭────────────────────────────╮\n"
+                            "│      🎬 <b>STORY TV VIP</b>        │\n"
+                            "│                            │\n"
+                            "│    📤 <b>UPLOADING 1080p</b>      │\n"
+                            "│                            │\n"
+                            f"│ 📺 <b>Show:</b> {show_title[:28]}\n"
+                            f"│ 🎬 <b>Episode:</b> {ep_idx}/{catalog_total_eps or '?'}\n"
+                            f"│ <code>{bar}</code> <b>{pct:5.1f}%</b>\n"
+                            f"│ ⚡ <b>Speed:</b> {spd_str} | ⏱️ <b>ETA:</b> {eta_str}\n"
+                            f"│ 💾 <b>Size:</b> {hrb(current)} / {hrb(total)}\n"
+                            "│                            │\n"
+                            f"│ 📊 <b>Shows:</b> {show_idx}/{total_shows} | ⏭️ Skipped: {global_skipped}\n"
+                            f"│ 📢 <b>Channel:</b> <code>{target_channel_id}</code>\n"
+                            "│ 🛑 <i>Send /stopstorytv to pause</i>\n"
+                            "╰────────────────────────────╯"
+                        )
+                        try:
+                            await editable.edit_text(card)
+                        except Exception:
+                            pass
 
                     try:
                         sent_msg = await client.send_video(
@@ -483,6 +616,7 @@ async def storytv_cmd(client: Client, message: Message):
                             caption=caption,
                             thumb=str(temp_thumb_file) if temp_thumb_file.exists() else None,
                             supports_streaming=True,
+                            progress=upload_progress_cb
                         )
 
                         tg_link = f"https://t.me/c/{clean_ch_id}/{sent_msg.id}"
@@ -523,7 +657,7 @@ async def storytv_cmd(client: Client, message: Message):
                             try: temp_thumb_file.unlink()
                             except Exception: pass
 
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(1.2)
 
                 # Advance cursor to the last episode seen in this batch
                 last_idx = batch[-1].get("index")
@@ -539,8 +673,9 @@ async def storytv_cmd(client: Client, message: Message):
         # BATCH COMPLETION SUMMARY
         # =========================================================================
         final_summary = (
-            f"🎉 <b>StoryTV Engine Completed!</b>\n\n"
+            f"🎉 <b>StoryTV 1080p Engine Completed!</b>\n\n"
             f"📚 <b>Total Shows in Catalog:</b> {total_shows}\n"
+            f"🌟 <b>Quality:</b> 1080p Full HD Native\n"
             f"✅ <b>New Episodes Uploaded:</b> {global_uploaded}\n"
             f"⏭️ <b>Episodes Skipped (Already Uploaded):</b> {global_skipped}\n"
             f"📢 <b>Destination Channel:</b> <code>{target_channel_id}</code>\n"
