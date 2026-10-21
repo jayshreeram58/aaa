@@ -113,4 +113,8 @@ node_modules/
 *.swp
 *.swo
 *~
+bypass-shortlinks/
+.playwright-mcp/
+course_wallah_platform/
+extracted_shows/
 

@@ -5242,6 +5242,66 @@ def register_all_handlers(client: Client):
     except Exception as _st_err:
         logging.warning(f"Failed to load storytv_cmd: {_st_err}")
 
+    # Bypass Shortlinks Command
+    try:
+        from bypass_service.client import async_bypass_url
+
+        async def bypass_cmd(client: Client, message: Message):
+            """Bypasses any link shortener, Indian go-link, or filehost."""
+            args = message.text.split(None, 1)
+            target_url = None
+            if len(args) > 1:
+                target_url = args[1].strip()
+            elif message.reply_to_message and message.reply_to_message.text:
+                m = re.search(r'https?://[^\s]+', message.reply_to_message.text)
+                if m:
+                    target_url = m.group(0)
+
+            if not target_url:
+                await message.reply_text(
+                    "⚡ **Course Wallah Bypass Service**\n\n"
+                    "**Usage:** `/bypass <shortlink>`\n"
+                    "_Or reply to any link message with_ `/bypass`\n\n"
+                    "Supported: GPLinks, Droplink, Shrinkme, Rocklinks, VPLink, SoftURL, Modsfire, TinyURL, and 400+ domains!",
+                    quote=True
+                )
+                return
+
+            status_msg = await message.reply_text("⏳ **Bypassing link, please wait...**", quote=True)
+            try:
+                res = await async_bypass_url(target_url)
+                if res.get("success"):
+                    bypassed_url = res["bypassed_url"]
+                    handler = res.get("handler", "Direct")
+                    time_ms = res.get("time_ms", 0)
+                    hops = res.get("hops", 1)
+
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🚀 Open Clean Link", url=bypassed_url)]
+                    ])
+
+                    text = (
+                        "⚡ **Link Bypassed Successfully!**\n\n"
+                        f"🔗 **Original:** `{res['original_url']}`\n\n"
+                        f"✅ **Clean Link:**\n`{bypassed_url}`\n\n"
+                        f"⏱ **Time:** `{time_ms} ms` | **Hops:** `{hops}` | **Handler:** `{handler}`"
+                    )
+                    await status_msg.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
+                else:
+                    await status_msg.edit_text(
+                        f"⚠️ **Could not bypass link automatically.**\n\n"
+                        f"URL: `{target_url}`\n"
+                        f"_No redirects or known shortener tokens were detected._",
+                        disable_web_page_preview=True
+                    )
+            except Exception as e:
+                await status_msg.edit_text(f"❌ **Error while bypassing:** `{e}`")
+
+        add_handler_to_client(client, MessageHandler(bypass_cmd, filters.command(["bypass", "unshorten"]) & filters.private & auth_filter))
+    except Exception as _bp_err:
+        logging.warning(f"Failed to register bypass_cmd: {_bp_err}")
+
+
     # Admin Commands
     add_handler_to_client(client, MessageHandler(admin_panel_cmd, filters.command("admin") & filters.private & admin_filter))
     add_handler_to_client(client, MessageHandler(admin_stats_cmd, filters.command("stats") & filters.private))

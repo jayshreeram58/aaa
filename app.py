@@ -107,5 +107,51 @@ def home():
 </html>
 """
 
+# ============================================
+# Course Wallah Bypass API & UI Integration
+# ============================================
+try:
+    from bypass_service import default_engine
+    from bypass_service.server import DASHBOARD_HTML
+    from flask import request, jsonify
+
+    @app.route('/bypass', methods=['GET'])
+    def bypass_dashboard():
+        url_param = request.args.get('url')
+        if url_param and request.headers.get('Accept', '').startswith('application/json'):
+            return jsonify(default_engine.bypass(url_param))
+        return DASHBOARD_HTML
+
+    @app.route('/api/bypass', methods=['GET', 'POST', 'OPTIONS'])
+    def api_bypass():
+        if request.method == 'OPTIONS':
+            return ('', 204)
+        target_url = None
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            target_url = data.get('url') or request.form.get('url')
+        else:
+            target_url = request.args.get('url')
+
+        if not target_url:
+            return jsonify({
+                "success": False,
+                "error": "Missing 'url' parameter"
+            }), 400
+
+        result = default_engine.bypass(target_url)
+        return jsonify(result)
+
+    @app.route('/api/bypass/health', methods=['GET'])
+    def api_bypass_health():
+        return jsonify({
+            "status": "online",
+            "service": "Course Wallah Bypass Service",
+            "cache_entries": len(default_engine._cache)
+        })
+except Exception as e:
+    pass
+
 if __name__ == "__main__":
     app.run(debug=True)
+
