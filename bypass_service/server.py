@@ -9,10 +9,24 @@ Run with:
 import os
 import sys
 import time
+
+# Ensure UTF-8 stdout encoding on Windows
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from flask import Flask, request, jsonify, render_template_string
 from .engine import default_engine, BypassEngine
 
 app = Flask(__name__)
+
 SERVER_START_TIME = time.time()
 
 # HTML Dashboard Template
@@ -516,8 +530,9 @@ def api_supported():
 
 
 def run_server(host: str = "0.0.0.0", port: int = 5055, debug: bool = False):
-    print(f"🚀 Course Wallah Bypass API running on http://{host}:{port}")
+    print(f"[BYPASS ENGINE] Server running at http://{host}:{port} and http://localhost:{port}/bypass")
     app.run(host=host, port=port, debug=debug)
+
 
 
 if __name__ == "__main__":

@@ -20,8 +20,10 @@ from .handlers import (
     bypass_filehost,
     is_filehost,
     follow_http_redirects,
-    unshorten_via_free_api
+    unshorten_via_free_api,
+    bypass_with_headless_browser
 )
+
 
 # 6-Hour Cache TTL
 CACHE_TTL = 6 * 3600
@@ -118,8 +120,16 @@ class BypassEngine:
                     bypassed = free_res
                     handler_name = "unshorten_api"
 
+            # 6. Headless Browser Solver with Userscript Injection (Ultimate 100% Final Solver)
+            if not bypassed:
+                browser_res = bypass_with_headless_browser(current_url, max_wait_sec=14)
+                if browser_res and browser_res != current_url:
+                    bypassed = browser_res
+                    handler_name = "headless_browser_userscript"
+
             # If a new URL was unlocked
             if bypassed and bypassed != current_url and bypassed not in history:
+
                 current_url = bypassed
                 hops_taken += 1
                 used_handler = handler_name or "chain"

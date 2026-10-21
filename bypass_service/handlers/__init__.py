@@ -11,6 +11,7 @@ from .generic import (
 from .indian import bypass_indian, is_indian_shortener
 from .filehost import bypass_filehost, is_filehost
 from .public_api import follow_http_redirects, unshorten_via_free_api
+from .browser_solver import bypass_with_headless_browser
 
 __all__ = [
     'decode_base64_safe',
@@ -24,4 +25,6 @@ __all__ = [
     'is_filehost',
     'follow_http_redirects',
     'unshorten_via_free_api',
+    'bypass_with_headless_browser',
 ]
+
