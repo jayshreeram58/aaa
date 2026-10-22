@@ -14,6 +14,7 @@ import asyncio
 import logging
 import sqlite3
 import base64
+import uuid
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from urllib.parse import unquote, urlparse
@@ -2149,13 +2150,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
             # 5. ITEM ROUTING, DOWNLOAD & MULTI-STREAM UPLOAD
             # =================================================================
             active_wm = watermark if watermark not in ("/d", "no", "none", "") else None
-            custom_headers = {
-                "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
-                "Referer": "https://app.boosteracademy.in/",
-                "Origin": "https://boosteracademyapi.classx.co.in",
-                "Accept": "*/*",
-                "Connection": "keep-alive"
-            }
+            custom_headers = helper.get_dynamic_headers_for_url(url)
 
             media_type = MediaRouter.classify_url(url, getattr(item, 'category', None))
             v_status = "NOT_AVAILABLE"
