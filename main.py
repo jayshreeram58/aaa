@@ -5621,6 +5621,15 @@ def register_all_handlers(client: Client):
     except Exception as _st_err:
         logging.warning(f"Failed to load storytv_cmd: {_st_err}")
 
+    # SonyLIV Automated Downloader & Channel Uploader
+    try:
+        from sonyliv_handler import sonyliv_cmd, stop_sonyliv_cmd, recoversonyliv_cmd
+        add_handler_to_client(client, MessageHandler(sonyliv_cmd, filters.command(["sonyliv", "sony"]) & filters.private & auth_filter))
+        add_handler_to_client(client, MessageHandler(stop_sonyliv_cmd, filters.command(["stopsonyliv", "stopsony"]) & filters.private & auth_filter))
+        add_handler_to_client(client, MessageHandler(recoversonyliv_cmd, filters.command(["recoversonyliv", "recoversony"]) & filters.private & auth_filter))
+    except Exception as _sony_err:
+        logging.warning(f"Failed to load sonyliv_cmd: {_sony_err}")
+
     # Bypass Shortlinks Command
     try:
         from bypass_service.client import async_bypass_url

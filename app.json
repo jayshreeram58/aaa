@@ -50,8 +50,8 @@
       "required": false
     },
     "OWNER_ID": {
-      "description": "Your Telegram numeric user ID (e.g. 8738736556)",
-      "value": "8738736556",
+      "description": "Your Telegram numeric user ID (e.g. 8504838657)",
+      "value": "8504838657",
       "required": true
     },
     "GITHUB_TOKEN": {

@@ -94,11 +94,11 @@ BOTS: List[Dict[str, Any]] = get_configured_bots()
 # ==============================================================================
 # 👥 OWNER & ADMINS
 # ==============================================================================
-MASTER_ADMIN_IDS = [8738736556, 6363840742]
+MASTER_ADMIN_IDS = [8504838657, 8738736556, 6363840742]
 
 OWNER_ID_RAW = os.environ.get("OWNER_ID", "").strip().strip("'\"")
 owner_digits = re.findall(r"\d+", OWNER_ID_RAW)
-OWNER_ID = int(owner_digits[0]) if owner_digits else 8738736556
+OWNER_ID = int(owner_digits[0]) if owner_digits else 8504838657
 
 ADMINS_RAW = os.environ.get("ADMINS", "").strip().strip("'\"")
 admin_digits = re.findall(r"\d+", ADMINS_RAW)

