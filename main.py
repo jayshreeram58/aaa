@@ -172,6 +172,7 @@ from utils import (
 from job_manager import job_manager, JobManager, JobCheckpoint
 import auth
 import itsgolu as helper
+from cw_platform_sync import CourseWallahPlatformSync
 from youtube_fallback import (
     fetch_ytultra_media_data,
     parse_all_ytultra_qualities,
@@ -1287,6 +1288,69 @@ async def khan_extract_cmd(client: Client, message: Message):
 
 
 # ==============================================================================
+# 📱 COURSE WALLAH PLATFORM APP MANAGEMENT
+# ==============================================================================
+
+async def list_apps_cmd(client: Client, message: Message):
+    """Lists all educational platform apps registered on Course Wallah."""
+    apps = CourseWallahPlatformSync.get_all_apps()
+    lines = [f"<b>📱 Course Wallah Platform Apps ({len(apps)})</b>\n"]
+    for i, a in enumerate(apps, 1):
+        lines.append(f"<b>{i}. {a.get('name')}</b> (ID: <code>{a.get('id')}</code>)\n   <i>{a.get('description', '')}</i>")
+    lines.append("\n💡 <i>Use /newapp to register a new educational app on the platform.</i>")
+    await message.reply_text("\n".join(lines), parse_mode=enums.ParseMode.HTML)
+
+
+async def create_new_app_cmd(client: Client, message: Message):
+    """Interactively or via arguments registers a new app on Course Wallah platform."""
+    user_id = message.from_user.id if message.from_user else 0
+    cmd_text = (message.text or "").strip()
+    parts = cmd_text.split(maxsplit=1)
+
+    if len(parts) > 1 and parts[1].strip():
+        name = parts[1].strip()
+        app = CourseWallahPlatformSync.create_new_app(name=name)
+        await message.reply_text(
+            f"🎉 <b>App Created Successfully!</b>\n\n"
+            f"• <b>Name:</b> {app['name']}\n"
+            f"• <b>App ID:</b> <code>{app['id']}</code>\n"
+            f"• <b>Description:</b> {app['description']}\n\n"
+            "This app is now available for batch downloads and web player streaming!",
+            parse_mode=enums.ParseMode.HTML
+        )
+        return
+
+    prompt = await message.reply_text("🏷️ <b>Send New App Name</b> (e.g. Booster Academy, Technical Classes, Adda247) or /cancel:")
+    try:
+        resp: Message = await client.listen(chat_id=message.chat.id, user_id=user_id, timeout=45)
+        name = resp.text.strip() if resp.text else ""
+        await resp.delete(True)
+        await prompt.delete()
+        if not name or name.lower() in ("/cancel", "cancel"):
+            await message.reply_text("❌ App creation cancelled.")
+            return
+
+        desc_prompt = await message.reply_text(f"📝 Send short description for <b>{name}</b> (or /d for default):")
+        d_resp: Message = await client.listen(chat_id=message.chat.id, user_id=user_id, timeout=45)
+        desc = d_resp.text.strip() if d_resp.text else "/d"
+        await d_resp.delete(True)
+        await desc_prompt.delete()
+        desc = f"{name} Courses & Batches" if desc in ("/d", "") else desc
+
+        app = CourseWallahPlatformSync.create_new_app(name=name, description=desc)
+        await message.reply_text(
+            f"🎉 <b>App Created Successfully!</b>\n\n"
+            f"• <b>Name:</b> {app['name']}\n"
+            f"• <b>App ID:</b> <code>{app['id']}</code>\n"
+            f"• <b>Description:</b> {app['description']}\n\n"
+            "This app is now available for batch downloads and web player streaming!",
+            parse_mode=enums.ParseMode.HTML
+        )
+    except Exception as e:
+        await message.reply_text(f"❌ App creation failed or timed out: {e}")
+
+
+# ==============================================================================
 # 📥 CORE DOWNLOADER WORKFLOW: /drm
 # ==============================================================================
 
@@ -1394,16 +1458,87 @@ async def drm_cmd(client: Client, message: Message, doc_message: Message = None)
     vid_count = total_links - (pdf_count + img_count + zip_count)
 
     units_count = len([u for u in course_data.units if u.number != 0])
+
+    # 0. App Selection (Course Wallah Platform Catalog)
+    registered_apps = CourseWallahPlatformSync.get_all_apps()
+    app_menu_lines = []
+    for idx_a, a_item in enumerate(registered_apps, 1):
+        app_menu_lines.append(f"<b>{idx_a}.</b> {a_item.get('name', 'App')} (<code>{a_item.get('id', '')}</code>)")
+
+    app_menu_text = (
+        f"<b>Subject:</b> {course_data.subject}\n<b>Course:</b> {course_data.course}\n"
+        f"<b>Items:</b> {total_links} (🎥 {vid_count} | 📑 {pdf_count})\n\n"
+        f"<b>Choose Target App for Course Wallah Platform:</b>\n"
+        + "\n".join(app_menu_lines)
+        + f"\n\n➕ Send <b>new</b> to <b>Create a New App</b>\n"
+        f"Send number (1-{len(registered_apps)}) or /d for Physics Wallah:"
+    )
+    card_0, mark_0 = format_universal_input_card(
+        "PLATFORM APP SELECTION",
+        app_menu_text,
+        example="1 or /d or new",
+        cancel_callback="input_cancel",
+        user_id=user_id
+    )
+    await editable.edit(card_0, reply_markup=mark_0)
+
+    chosen_app = registered_apps[0] if registered_apps else {"id": "physics_wallah", "name": "Physics Wallah"}
+    try:
+        app_msg: Message = await client.listen(chat_id=message.chat.id, user_id=user_id, timeout=45)
+        app_text = app_msg.text.strip() if app_msg.text else "/d"
+        await app_msg.delete(True)
+        if app_text.lower() in ("/cancel", "cancel"):
+            await editable.edit("❌ <b>Batch operation cancelled.</b>")
+            if os.path.exists(doc_path):
+                os.remove(doc_path)
+            return
+
+        if app_text.lower() == "new":
+            p_name = await message.reply_text("🏷️ Send new app name (e.g. Booster Academy, Technical Classes, Adda247):")
+            n_resp: Message = await client.listen(chat_id=message.chat.id, user_id=user_id, timeout=30)
+            new_app_name = n_resp.text.strip() if n_resp.text else ""
+            await n_resp.delete(True)
+            await p_name.delete()
+
+            if not new_app_name or new_app_name.lower() in ("/cancel", "cancel"):
+                await editable.edit("❌ <b>Batch operation cancelled.</b>")
+                if os.path.exists(doc_path):
+                    os.remove(doc_path)
+                return
+
+            p_desc = await message.reply_text(f"📝 Send description for <b>{new_app_name}</b> (or /d):")
+            d_resp: Message = await client.listen(chat_id=message.chat.id, user_id=user_id, timeout=30)
+            new_app_desc = d_resp.text.strip() if d_resp.text else "/d"
+            await d_resp.delete(True)
+            await p_desc.delete()
+            new_app_desc = f"{new_app_name} Courses & Batches" if new_app_desc in ("/d", "") else new_app_desc
+
+            chosen_app = CourseWallahPlatformSync.create_new_app(new_app_name, new_app_desc)
+        elif app_text != "/d":
+            if app_text.isdigit():
+                sel_num = int(app_text)
+                if 1 <= sel_num <= len(registered_apps):
+                    chosen_app = registered_apps[sel_num - 1]
+            else:
+                matched = CourseWallahPlatformSync.get_app_by_slug(app_text)
+                if matched:
+                    chosen_app = matched
+    except Exception as e:
+        logger.warning(f"App selection fallback: {e}")
+
+    app_slug = chosen_app.get("id", "physics_wallah")
+    app_display = chosen_app.get("name", "Physics Wallah")
+
+    # 1. Start Index
     card_1, mark_1 = format_universal_input_card(
         "BATCH START INDEX",
-        f"Subject: {course_data.subject}\nCourse: {course_data.course}\nUnits: {units_count} | Items: {total_links}\n🎥 Videos: {vid_count} | 📑 PDFs: {pdf_count}\n\nSend Start Index (1 - {total_links}) or send /d for 1:",
+        f"App: <b>{app_display}</b>\nSubject: {course_data.subject}\nCourse: {course_data.course}\nUnits: {units_count} | Items: {total_links}\n🎥 Videos: {vid_count} | 📑 PDFs: {pdf_count}\n\nSend Start Index (1 - {total_links}) or send /d for 1:",
         example="1 or /d",
         cancel_callback="input_cancel",
         user_id=user_id
     )
     await editable.edit(card_1, reply_markup=mark_1)
 
-    # 1. Start Index
     try:
         idx_msg: Message = await client.listen(chat_id=message.chat.id, user_id=user_id, timeout=30)
         idx_text = idx_msg.text.strip() if idx_msg.text else "/d"
@@ -1418,15 +1553,40 @@ async def drm_cmd(client: Client, message: Message, doc_message: Message = None)
         start_idx = 1
     start_idx = max(1, min(start_idx, total_links))
 
-    # 2. Batch Name
+    # 2. Batch Name & Duplicate Detection (Skip already downloaded items)
+    default_batch = course_data.course or "Course Batch"
+    existing_info = CourseWallahPlatformSync.get_existing_completed_items(app_slug, default_batch)
+    batch_exists = existing_info["count"] > 0 or CourseWallahPlatformSync.check_batch_exists(app_slug, default_batch)
+
+    if batch_exists and existing_info["count"] > 0:
+        prompt_b = (
+            f"⚠️ <b>Existing Course/Batch Detected in {app_display}!</b>\n\n"
+            f"Course: <code>{default_batch}</code>\n"
+            f"Already Downloaded: <b>{existing_info['count']} items</b>\n\n"
+            f"• Send <b>/d</b> or <b>skip</b> to <b>SKIP already downloaded items</b> (recommended)\n"
+            f"• Send <b>all</b> to re-download everything\n"
+            f"• Or send a <b>new batch name</b>:"
+        )
+    elif batch_exists:
+        prompt_b = (
+            f"⚠️ <b>Existing Batch in {app_display}!</b>\n\n"
+            f"Batch '<code>{default_batch}</code>' already exists on Course Wallah platform.\n\n"
+            f"• Send <b>/d</b> to append / resume into this batch.\n"
+            f"• Or send a <b>new batch name</b>:"
+        )
+    else:
+        prompt_b = f"Target App: <b>{app_display}</b>\n\nSend Batch Name or send /d for default ('{default_batch}'):"
+
     card_2, mark_2 = format_universal_input_card(
-        "BATCH NAME",
-        f"Send Batch Name or send /d for default ('{course_data.course}'):",
-        example=course_data.course,
+        "BATCH NAME & DUPLICATE CHECK",
+        prompt_b,
+        example=default_batch,
         cancel_callback="input_cancel",
         user_id=user_id
     )
     await editable.edit(card_2, reply_markup=mark_2)
+
+    skip_already_downloaded = False
     try:
         b_msg: Message = await client.listen(chat_id=message.chat.id, user_id=user_id, timeout=30)
         b_text = b_msg.text.strip() if b_msg.text else "/d"
@@ -1436,9 +1596,24 @@ async def drm_cmd(client: Client, message: Message, doc_message: Message = None)
             if os.path.exists(doc_path):
                 os.remove(doc_path)
             return
-        batch_name = course_data.course if b_text == "/d" else b_text
+
+        if b_text.lower() in ("/d", "skip", "d"):
+            batch_name = default_batch
+            if existing_info["count"] > 0:
+                skip_already_downloaded = True
+        elif b_text.lower() == "all":
+            batch_name = default_batch
+            skip_already_downloaded = False
+        else:
+            batch_name = b_text
+            new_info = CourseWallahPlatformSync.get_existing_completed_items(app_slug, batch_name)
+            if new_info["count"] > 0:
+                skip_already_downloaded = True
+                existing_info = new_info
     except Exception:
-        batch_name = course_data.course
+        batch_name = default_batch
+        if existing_info["count"] > 0:
+            skip_already_downloaded = True
 
     # 3. Resolution
     card_3, mark_3 = format_universal_input_card(
@@ -1597,6 +1772,8 @@ async def drm_cmd(client: Client, message: Message, doc_message: Message = None)
         raw_content=content_str,
         total_items=total_links,
         start_index=start_idx,
+        app_id=app_slug,
+        app_name=app_display,
         batch_name=batch_name,
         quality=quality,
         watermark=wm_val,
@@ -1607,6 +1784,18 @@ async def drm_cmd(client: Client, message: Message, doc_message: Message = None)
         bot_username=bot_uname
     )
 
+    # If user chose to skip already downloaded items, mark them completed in the job checkpoint
+    skipped_items_count = 0
+    if skip_already_downloaded and existing_info.get("count", 0) > 0:
+        for idx_i, item_i in enumerate(course_data.all_items):
+            item_num = idx_i + 1
+            item_title_lower = (item_i.title or "").strip().lower()
+            if item_num in existing_info.get("indices", set()) or item_title_lower in existing_info.get("titles", set()):
+                if idx_i not in job.completed_indices:
+                    job.completed_indices.append(idx_i)
+                    skipped_items_count += 1
+        db.save_job(job.to_dict())
+
     if os.path.exists(doc_path):
         try:
             os.remove(doc_path)
@@ -1614,11 +1803,15 @@ async def drm_cmd(client: Client, message: Message, doc_message: Message = None)
             pass
 
     # Launch background job pipeline
+    skipped_note = f"\n• <b>Skipped (Already Downloaded):</b> {skipped_items_count} items" if skipped_items_count > 0 else ""
+    remaining_count = max(0, total_links - skipped_items_count)
     await message.reply_text(
         f"🚀 <b>Task Created Successfully!</b>\n\n"
         f"• <b>Job ID:</b> <code>{job.job_id}</code>\n"
+        f"• <b>App:</b> {app_display}\n"
         f"• <b>Course:</b> {batch_name}\n"
-        f"• <b>Items:</b> {total_links}\n"
+        f"• <b>Total Items:</b> {total_links}{skipped_note}\n"
+        f"• <b>Remaining to Download:</b> {remaining_count}\n"
         f"• <b>Quality:</b> {quality}\n\n"
         "Download started in background. Use /status to check progress."
     )
@@ -2157,6 +2350,8 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
             pdf_status = "NOT_AVAILABLE"
             v_error = None
             pdf_error = None
+            uploaded_vid_msg = None
+            uploaded_pdf_msg = None
 
             def _on_part_done(part_idx, item_idx=i+1):
                 key = str(item_idx)
@@ -2260,7 +2455,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                         print(f"[APPX {job_id}] UPLOAD START")
                         logging.info(f"[APPX {job_id}] UPLOAD START")
                         async with manager.upload_semaphore:
-                            await helper.send_vid(
+                            uploaded_vid_msg = await helper.send_vid(
                                 bot_client,
                                 prog_msg,
                                 caption_text,
@@ -2334,7 +2529,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                         print(f"[APPX {job_id}] PDF UPLOAD START")
                         logging.info(f"[APPX {job_id}] PDF UPLOAD START")
                         async with manager.upload_semaphore:
-                            await bot_client.send_document(
+                            uploaded_pdf_msg = await bot_client.send_document(
                                 chat_id=channel_id,
                                 document=pdf_doc,
                                 caption=pdf_cap,
@@ -2408,7 +2603,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                 job.phase = "UPLOADING"
                 db.save_job(job.to_dict())
                 async with manager.upload_semaphore:
-                    await helper.send_vid(
+                    uploaded_vid_msg = await helper.send_vid(
                         bot_client,
                         prog_msg,
                         caption_text,
@@ -2486,7 +2681,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                 job.phase = "UPLOADING"
                 db.save_job(job.to_dict())
                 async with manager.upload_semaphore:
-                    await helper.send_vid(
+                    uploaded_vid_msg = await helper.send_vid(
                         bot_client,
                         prog_msg,
                         caption_text,
@@ -2545,7 +2740,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                         pass
 
                 async with manager.upload_semaphore:
-                    await bot_client.send_document(
+                    uploaded_pdf_msg = await bot_client.send_document(
                         chat_id=channel_id,
                         document=pdf_file,
                         caption=caption_text,
@@ -2605,6 +2800,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
 
                 if yt_uploaded_msg:
                     v_status = "SUCCESS"
+                    uploaded_vid_msg = yt_uploaded_msg
                 else:
                     yt_file = await helper.download_video(url, name_clean, quality, user_id=user_id, custom_dir=downloads_dir)
                     if not yt_file or not os.path.exists(yt_file) or os.path.getsize(yt_file) == 0:
@@ -2632,7 +2828,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                     job.phase = "UPLOADING"
                     db.save_job(job.to_dict())
                     async with manager.upload_semaphore:
-                        await helper.send_vid(
+                        uploaded_vid_msg = await helper.send_vid(
                             bot_client,
                             prog_msg,
                             caption_text,
@@ -2701,7 +2897,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                 job.phase = "UPLOADING"
                 db.save_job(job.to_dict())
                 async with manager.upload_semaphore:
-                    await helper.send_vid(
+                    uploaded_vid_msg = await helper.send_vid(
                         bot_client,
                         prog_msg,
                         caption_text,
@@ -2785,7 +2981,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                 job.phase = "UPLOADING"
                 db.save_job(job.to_dict())
                 async with manager.upload_semaphore:
-                    await helper.send_vid(
+                    uploaded_vid_msg = await helper.send_vid(
                         bot_client,
                         prog_msg,
                         caption_text,
@@ -2898,7 +3094,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                 job.phase = "UPLOADING"
                 db.save_job(job.to_dict())
                 async with manager.upload_semaphore:
-                    await helper.send_vid(
+                    uploaded_vid_msg = await helper.send_vid(
                         bot_client,
                         prog_msg,
                         caption_text,
@@ -2949,6 +3145,37 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                 })
                 db.save_job(job.to_dict())
                 logger.info(f"[JOB {job_id}] Completed item {i+1}/{total_items}: {item.title} (Video={v_status}, PDF={pdf_status})")
+
+                # Record upload to Course Wallah platform catalog and batch JSON
+                try:
+                    CourseWallahPlatformSync.record_lecture_upload(
+                        app_slug=getattr(job, "app_id", "physics_wallah"),
+                        batch_name=b_name,
+                        subject_name=course_data.subject if course_data.subject != "General" else "General",
+                        chapter_name=active_unit.title if active_unit else "Lectures",
+                        lecture_title=item.title,
+                        item_index=i + 1,
+                        video_msg_id=getattr(uploaded_vid_msg, "id", None) or getattr(uploaded_vid_msg, "message_id", None) if uploaded_vid_msg else None,
+                        pdf_msg_id=getattr(uploaded_pdf_msg, "id", None) or getattr(uploaded_pdf_msg, "message_id", None) if uploaded_pdf_msg else None,
+                        channel_id=channel_id,
+                        topic_thread_id=active_thread_id,
+                        video_url=url if v_status == "SUCCESS" else None,
+                        pdf_url=url if pdf_status == "SUCCESS" else None
+                    )
+                except Exception as sync_e:
+                    logger.warning(f"[CourseWallahSync] Error recording lecture upload: {sync_e}")
+
+                # Auto-push to GitHub every 5 completed contents
+                completed_count = len(job.completed_indices)
+                if completed_count > 0 and completed_count % 5 == 0:
+                    try:
+                        logger.info(f"[CourseWallahSync] 5-item threshold reached ({completed_count} total). Auto-pushing to GitHub...")
+                        CourseWallahPlatformSync.push_to_github(
+                            app_slug=getattr(job, "app_id", "physics_wallah"),
+                            batch_slug=b_name
+                        )
+                    except Exception as prog_e:
+                        logger.debug(f"[CourseWallahSync] 5-item GitHub push notice: {prog_e}")
             else:
                 job.failed_indices.append(i)
                 unit_items_failed += 1
@@ -3077,13 +3304,28 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
         except Exception:
             pass
 
+        # Final Course Wallah sync to GitHub
+        cw_sync_note = ""
+        try:
+            p_res = CourseWallahPlatformSync.push_to_github(
+                app_slug=getattr(job, "app_id", "physics_wallah"),
+                batch_slug=b_name
+            )
+            if p_res.get("success"):
+                cw_sync_note = f"\n🌐 <b>Course Wallah Git Sync:</b> Synced {p_res.get('pushed_files', 0)} files to GitHub"
+            elif p_res.get("reason"):
+                cw_sync_note = f"\n🌐 <b>Course Wallah Git Sync:</b> {p_res.get('reason')}"
+        except Exception as sync_fin_e:
+            logger.warning(f"Final Course Wallah git sync failed: {sync_fin_e}")
+
         bot_disp = get_bot_display_name(bot_client)
         summary_text = (
             "🎉 <b>DOWNLOAD COMPLETED</b>\n\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"📦 <b>Total:</b> {total_items}\n"
             f"✅ <b>Successful:</b> {success_count}\n"
-            f"❌ <b>Failed:</b> {failed_count}\n\n"
+            f"❌ <b>Failed:</b> {failed_count}"
+            f"{cw_sync_note}\n\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"𝄟⃝⚡️ <b>{bot_disp}</b>"
         )
@@ -5231,6 +5473,8 @@ def register_all_handlers(client: Client):
     add_handler_to_client(client, MessageHandler(fetchdetails_cmd, filters.command(["fetchdetails", "fetchcourses"]) & filters.private & auth_filter))
     add_handler_to_client(client, MessageHandler(youtube_extract_cmd, filters.command(["youtube", "ytextract"]) & filters.private & auth_filter))
     add_handler_to_client(client, MessageHandler(khan_extract_cmd, filters.command(["khan", "khansir"]) & filters.private & auth_filter))
+    add_handler_to_client(client, MessageHandler(list_apps_cmd, filters.command("apps") & filters.private & auth_filter))
+    add_handler_to_client(client, MessageHandler(create_new_app_cmd, filters.command(["newapp", "addapp"]) & filters.private & auth_filter))
     try:
         from storytv_handler import storytv_cmd, stop_storytv_cmd, recover_storytv_cmd
         add_handler_to_client(client, MessageHandler(storytv_cmd, filters.command(["storytv", "story"]) & filters.private & auth_filter))
@@ -5449,6 +5693,8 @@ async def setup_bot_commands(client: Client):
             BotCommand("fetchdetails", "Fetch Classplus courses"),
             BotCommand("youtube", "Extract YouTube playlist/channel"),
             BotCommand("khan", "Extract Khan Sir batch links"),
+            BotCommand("apps", "List Course Wallah platform apps"),
+            BotCommand("newapp", "Create new platform app"),
             BotCommand("id", "Get your Telegram & Chat ID"),
             BotCommand("help", "View user manual")
         ]

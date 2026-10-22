@@ -40,5 +40,11 @@
     "name": "SonyLIV",
     "description": "Entertainment Shows, Sitcoms & Originals",
     "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/sonyliv_brand_icon.svg"
+  },
+  {
+    "id": "booster_academy",
+    "name": "Booster Academy",
+    "description": "Booster Academy Live Classes & Exam Prep",
+    "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/pw_brand_icon.jpg"
   }
 ]

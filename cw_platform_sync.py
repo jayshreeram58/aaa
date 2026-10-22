@@ -56,6 +56,12 @@ DEFAULT_APPS = [
         "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/technical_classes_brand_icon.svg"
     },
     {
+        "id": "booster_academy",
+        "name": "Booster Academy",
+        "description": "Booster Academy Live Classes & Exam Prep",
+        "icon": "https://raw.githubusercontent.com/ramjipatel-tech/course-wallah-platform/main/web/public/icons/pw_brand_icon.jpg"
+    },
+    {
         "id": "storytv",
         "name": "StoryTV",
         "description": "Vertical Reels Micro-Series & Short Dramas",
@@ -100,12 +106,31 @@ class CourseWallahPlatformSync:
     def get_all_apps(cls) -> List[Dict[str, Any]]:
         with _SYNC_LOCK:
             f = cls.get_apps_file()
+            apps = []
             try:
                 with open(f, "r", encoding="utf-8") as fp:
-                    return json.load(fp)
+                    apps = json.load(fp)
             except Exception as e:
                 logger.warning(f"Error reading apps.json: {e}")
-                return DEFAULT_APPS
+                apps = list(DEFAULT_APPS)
+
+            # Ensure all default apps are present
+            existing_ids = {slugify(a.get("id", "")) for a in apps}
+            updated = False
+            for da in DEFAULT_APPS:
+                if slugify(da.get("id", "")) not in existing_ids:
+                    apps.append(da)
+                    existing_ids.add(slugify(da.get("id", "")))
+                    updated = True
+
+            if updated:
+                try:
+                    with open(f, "w", encoding="utf-8") as fp:
+                        json.dump(apps, fp, indent=2, ensure_ascii=False)
+                except Exception as we:
+                    logger.warning(f"Error writing merged apps.json: {we}")
+
+            return apps
 
     @classmethod
     def get_app_by_slug(cls, slug_or_name: str) -> Optional[Dict[str, Any]]:
@@ -205,21 +230,65 @@ class CourseWallahPlatformSync:
         return bf.exists()
 
     @classmethod
+    def get_existing_completed_items(cls, app_slug: str, batch_name: str) -> Dict[str, Any]:
+        """
+        Returns existing completed items in a batch to avoid duplicates:
+        - indices: set of completed lecture indices (1-indexed integers)
+        - titles: set of normalized lecture titles
+        - count: total count of completed items
+        """
+        safe_app = slugify(app_slug)
+        safe_b = slugify(batch_name)
+        batch_data = cls.get_batch(safe_app, safe_b)
+        if not batch_data:
+            return {"indices": set(), "titles": set(), "count": 0}
+
+        indices = set()
+        titles = set()
+        for sec in batch_data.get("sections", []):
+            for lec in sec.get("lectures", []):
+                if lec.get("messageId") or lec.get("videoUrl"):
+                    idx = lec.get("index")
+                    if idx is not None:
+                        try:
+                            indices.add(int(idx))
+                        except Exception:
+                            pass
+                    t = lec.get("title")
+                    if t:
+                        titles.add(str(t).strip().lower())
+            for note in sec.get("notes", []):
+                if note.get("messageId") or note.get("pdfUrl"):
+                    idx = note.get("index")
+                    if idx is not None:
+                        try:
+                            indices.add(int(idx))
+                        except Exception:
+                            pass
+                    t = note.get("title")
+                    if t:
+                        clean_t = str(t).replace("(Notes)", "").strip().lower()
+                        titles.add(clean_t)
+
+        return {"indices": indices, "titles": titles, "count": len(indices)}
+
+    @classmethod
     def record_lecture_upload(
         cls,
         app_slug: str,
-        app_name: str,
         batch_name: str,
-        channel_id: Any,
-        index: int,
-        title: str,
+        channel_id: Any = None,
+        index: Optional[int] = None,
+        title: Optional[str] = None,
+        app_name: Optional[str] = None,
         subject: str = "General",
         folder: str = "Lectures",
         video_msg_id: Optional[int] = None,
         duration: int = 0,
         thumbnail: str = "",
         pdf_msg_id: Optional[int] = None,
-        pdf_url: Optional[str] = None
+        pdf_url: Optional[str] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """
         Records an uploaded lecture video and/or PDF note into Course Wallah batch JSON.
@@ -227,6 +296,12 @@ class CourseWallahPlatformSync:
         /api/v1/stream/tg/{message_id}?chat_id={channel_id}
         """
         with _SYNC_LOCK:
+            idx = index if index is not None else kwargs.get("item_index", 1)
+            lec_title = title or kwargs.get("lecture_title", f"Lecture {idx}")
+            sub_name = kwargs.get("subject_name", subject) or "General"
+            fld_name = kwargs.get("chapter_name", folder) or "Lectures"
+            display_app = app_name or kwargs.get("app_display") or app_slug
+
             safe_app = slugify(app_slug)
             safe_b = slugify(batch_name)
             bf = cls.get_batch_file(safe_app, safe_b)
@@ -234,7 +309,7 @@ class CourseWallahPlatformSync:
             batch_data = cls.get_batch(safe_app, safe_b)
             if not batch_data:
                 batch_data = {
-                    "platform": app_name or "Course Wallah",
+                    "platform": display_app or "Course Wallah",
                     "appId": safe_app,
                     "batchId": safe_b,
                     "batchSlug": safe_b,
@@ -249,7 +324,7 @@ class CourseWallahPlatformSync:
                 }
 
             # Find or create section
-            sec_name = f"{subject} - {folder}" if folder and folder != subject else subject
+            sec_name = f"{sub_name} - {fld_name}" if fld_name and fld_name != sub_name else sub_name
             sec_id = slugify(sec_name)
 
             target_section = None
@@ -275,14 +350,14 @@ class CourseWallahPlatformSync:
             # Find existing lecture by index or append
             existing_lec = None
             for lec in target_section["lectures"]:
-                if lec.get("index") == index:
+                if lec.get("index") == idx:
                     existing_lec = lec
                     break
 
-            lec_id = f"lec_{safe_b}_{index:03d}"
+            lec_id = f"lec_{safe_b}_{idx:03d}"
 
             if existing_lec:
-                existing_lec["title"] = title
+                existing_lec["title"] = lec_title
                 if video_stream_url:
                     existing_lec["videoUrl"] = video_stream_url
                     existing_lec["messageId"] = video_msg_id
@@ -294,8 +369,8 @@ class CourseWallahPlatformSync:
             else:
                 new_lec = {
                     "lectureId": lec_id,
-                    "index": index,
-                    "title": title,
+                    "index": idx,
+                    "title": lec_title,
                     "duration": duration,
                     "messageId": video_msg_id,
                     "channelId": channel_id,
@@ -306,10 +381,10 @@ class CourseWallahPlatformSync:
 
             # If PDF notes exist for this lecture
             if pdf_stream_url:
-                note_id = f"note_{safe_b}_{index:03d}"
+                note_id = f"note_{safe_b}_{idx:03d}"
                 existing_note = None
                 for n in target_section.get("notes", []):
-                    if n.get("index") == index or n.get("noteId") == note_id:
+                    if n.get("index") == idx or n.get("noteId") == note_id:
                         existing_note = n
                         break
 
@@ -320,8 +395,8 @@ class CourseWallahPlatformSync:
                 else:
                     target_section["notes"].append({
                         "noteId": note_id,
-                        "index": index,
-                        "title": f"{title} (Notes)",
+                        "index": idx,
+                        "title": f"{lec_title} (Notes)",
                         "messageId": pdf_msg_id,
                         "pdfUrl": pdf_stream_url
                     })
@@ -375,15 +450,15 @@ class CourseWallahPlatformSync:
                 except Exception as se:
                     logger.debug(f"Could not write to sibling platform: {se}")
 
-            logger.info(f"✅ Recorded lecture #{index} '{title}' in batch JSON [{safe_app}/{safe_b}]")
+            logger.info(f"✅ Recorded lecture #{idx} '{lec_title}' in batch JSON [{safe_app}/{safe_b}]")
             return batch_data
 
     @classmethod
-    def push_to_github(cls, app_slug: str, batch_slug: str) -> bool:
+    def push_to_github(cls, app_slug: str, batch_slug: str) -> Dict[str, Any]:
         """Pushes the updated batch JSON and index to GitHub via GitHub API."""
         if not GITHUB_TOKEN:
             logger.debug("GITHUB_TOKEN not provided; skipping remote GitHub API commit.")
-            return False
+            return {"success": False, "reason": "GITHUB_TOKEN not configured"}
 
         safe_app = slugify(app_slug)
         safe_b = slugify(batch_slug)
@@ -392,7 +467,7 @@ class CourseWallahPlatformSync:
 
         if not bf.exists():
             logger.warning(f"Batch file '{bf}' does not exist; cannot push to GitHub.")
-            return False
+            return {"success": False, "reason": f"Batch file for {safe_b} not found"}
 
         try:
             with open(bf, "r", encoding="utf-8") as fp:
@@ -416,13 +491,13 @@ class CourseWallahPlatformSync:
 
             if ok1 and ok2:
                 logger.info(f"🚀 Pushed batch '{safe_b}' JSON to GitHub: {GITHUB_REPO} ({GITHUB_BRANCH})")
-                return True
+                return {"success": True, "pushed_files": 2}
             else:
                 logger.warning(f"⚠️ GitHub sync failed for '{safe_b}'. Data remains saved locally.")
-                return False
+                return {"success": False, "reason": "GitHub API commit failed (token error or rate limit)"}
         except Exception as e:
             logger.warning(f"Failed to push batch to GitHub: {e}")
-            return False
+            return {"success": False, "reason": str(e)}
 
     @classmethod
     def _github_put_file(cls, file_path: str, content: Any, commit_msg: str) -> bool:
