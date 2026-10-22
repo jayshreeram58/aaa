@@ -5582,6 +5582,8 @@ def register_all_handlers(client: Client):
     add_handler_to_client(client, MessageHandler(restart_cmd, filters.command("restart") & filters.private))
 
     # Auth Commands
+    add_handler_to_client(client, MessageHandler(auth.add_admin_cmd, filters.command(["addadmin", "add_admin"]) & filters.private))
+    add_handler_to_client(client, MessageHandler(auth.remove_admin_cmd, filters.command(["deladmin", "removeadmin", "del_admin"]) & filters.private))
     add_handler_to_client(client, MessageHandler(auth.add_user_cmd, filters.command(["add", "addauth"]) & filters.private))
     add_handler_to_client(client, MessageHandler(auth.renew_user_cmd, filters.command("renew") & filters.private))
     add_handler_to_client(client, MessageHandler(auth.remove_user_cmd, filters.command(["remove", "rmauth", "deleteuser"]) & filters.private))
@@ -5706,6 +5708,8 @@ async def setup_bot_commands(client: Client):
             BotCommand("add", "Add a new subscriber"),
             BotCommand("remove", "Remove a subscriber"),
             BotCommand("renew", "Renew user subscription"),
+            BotCommand("addadmin", "Promote user to admin"),
+            BotCommand("deladmin", "Demote an admin"),
             BotCommand("ban", "Ban a user"),
             BotCommand("unban", "Unban a user"),
             BotCommand("jobs", "View all active/recent jobs"),

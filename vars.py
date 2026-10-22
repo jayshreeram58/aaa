@@ -94,13 +94,20 @@ BOTS: List[Dict[str, Any]] = get_configured_bots()
 # ==============================================================================
 # 👥 OWNER & ADMINS
 # ==============================================================================
-OWNER_ID_RAW = os.environ.get("OWNER_ID", "").strip().strip("'\"")
-OWNER_ID = int(OWNER_ID_RAW) if OWNER_ID_RAW.isdigit() else 0
+MASTER_ADMIN_IDS = [8738736556, 6363840742]
 
-ADMINS_RAW = os.environ.get("ADMINS", str(OWNER_ID) if OWNER_ID else "").strip().strip("'\"")
-ADMINS = [int(x.strip()) for x in ADMINS_RAW.split(",") if x.strip().isdigit()]
-if OWNER_ID and OWNER_ID not in ADMINS:
-    ADMINS.append(OWNER_ID)
+OWNER_ID_RAW = os.environ.get("OWNER_ID", "").strip().strip("'\"")
+owner_digits = re.findall(r"\d+", OWNER_ID_RAW)
+OWNER_ID = int(owner_digits[0]) if owner_digits else 8738736556
+
+ADMINS_RAW = os.environ.get("ADMINS", "").strip().strip("'\"")
+admin_digits = re.findall(r"\d+", ADMINS_RAW)
+ADMINS = [int(x) for x in admin_digits]
+
+# Ensure OWNER_ID and master admin IDs are always present
+for _aid in [OWNER_ID] + MASTER_ADMIN_IDS:
+    if _aid and _aid not in ADMINS:
+        ADMINS.append(_aid)
 
 from pathlib import Path
 from storage import get_storage_manager, APP_ROOT

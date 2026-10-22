@@ -181,6 +181,50 @@ async def unban_user_cmd(client: Client, message: Message):
         await message.reply_text(f"❌ Error: {e}")
 
 
+async def add_admin_cmd(client: Client, message: Message):
+    """Add a new administrator: /addadmin <user_id>"""
+    try:
+        sender_id = message.from_user.id if message.from_user else 0
+        if not db.is_admin(sender_id):
+            await message.reply_text(AUTH_MESSAGES["not_admin"])
+            return
+
+        args = message.text.split()[1:]
+        if len(args) != 1:
+            await message.reply_text("❌ Format: <code>/addadmin &lt;user_id&gt;</code>\n\nExample:\n<code>/addadmin 8738736556</code>")
+            return
+
+        user_id = int(args[0])
+        if db.add_admin(user_id):
+            await message.reply_text(f"👑 User <code>{user_id}</code> is now a <b>Bot Administrator</b> with permanent access.")
+        else:
+            await message.reply_text("❌ Failed to promote user to administrator.")
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}")
+
+
+async def remove_admin_cmd(client: Client, message: Message):
+    """Remove an administrator: /deladmin <user_id>"""
+    try:
+        sender_id = message.from_user.id if message.from_user else 0
+        if not db.is_admin(sender_id):
+            await message.reply_text(AUTH_MESSAGES["not_admin"])
+            return
+
+        args = message.text.split()[1:]
+        if len(args) != 1:
+            await message.reply_text("❌ Format: <code>/deladmin &lt;user_id&gt;</code>")
+            return
+
+        user_id = int(args[0])
+        if db.remove_admin(user_id):
+            await message.reply_text(f"✅ User <code>{user_id}</code> removed from administrators.")
+        else:
+            await message.reply_text("❌ Cannot remove primary owner or master administrator.")
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}")
+
+
 async def list_users_cmd(client: Client, message: Message):
     """List all users: /users"""
     try:
