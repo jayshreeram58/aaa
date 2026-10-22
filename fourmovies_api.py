@@ -247,6 +247,10 @@ async def handle_stream_proxy(request: web.Request) -> web.StreamResponse:
         forward_headers["Origin"] = "https://ultracloud.cc"
         forward_headers["Referer"] = "https://ultracloud.cc/"
 
+    elif platform in ["hotstar", "jio"]:
+        forward_headers["Origin"] = "https://www.hotstar.com"
+        forward_headers["Referer"] = "https://www.hotstar.com/"
+
     # Forward Range headers if present (for seeking)
     if "Range" in request.headers:
         forward_headers["Range"] = request.headers["Range"]
@@ -273,13 +277,209 @@ async def handle_stream_proxy(request: web.Request) -> web.StreamResponse:
 
 
 # =====================================================================
+# 7. YouTube 4K Cloud Downloader Engine (Identical to asmultiverse.site)
+# =====================================================================
+import uuid
+import yt_dlp
+
+YT_DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads", "yt_cloud")
+os.makedirs(YT_DOWNLOAD_DIR, exist_ok=True)
+YT_JOBS = {}
+
+
+async def handle_yt_info(request: web.Request) -> web.Response:
+    """POST /api/yt/info with body {"url": "https://www.youtube.com/watch?v=..."}"""
+    try:
+        body = await request.json()
+    except Exception:
+        return json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+
+    url = body.get("url", "").strip()
+    if not url:
+        return json_response({"ok": False, "error": "Missing 'url' parameter"}, status=400)
+
+    def _extract():
+        ydl_opts = {'quiet': True, 'skip_download': True, 'no_warnings': True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            return ydl.extract_info(url, download=False)
+
+    try:
+        info = await asyncio.to_thread(_extract)
+        formats = info.get("formats", [])
+        
+        # Collect available video resolutions
+        seen_res = set()
+        video_qualities = []
+        for f in formats:
+            h = f.get("height")
+            if h and h not in seen_res:
+                seen_res.add(h)
+                label = f"{h}p"
+                if h >= 2160: label += " (4K Ultra HD)"
+                elif h >= 1440: label += " (2K Quad HD)"
+                elif h >= 1080: label += " (Full HD)"
+                video_qualities.append({"label": label, "value": str(h), "selected": h == 1080})
+
+        video_qualities.sort(key=lambda x: int(x["value"]), reverse=True)
+
+        audio_qualities = [
+            {"label": "320 kbps (Studio HD)", "value": "320"},
+            {"label": "256 kbps (High Quality)", "value": "256"},
+            {"label": "128 kbps (Fast Download)", "value": "128", "selected": True}
+        ]
+
+        subtitles = list((info.get("subtitles") or {}).keys())
+
+        return json_response({
+            "ok": True,
+            "isPlaylist": bool(info.get("_type") == "playlist"),
+            "title": info.get("title"),
+            "thumbnail": info.get("thumbnail"),
+            "duration": info.get("duration_string"),
+            "durationSeconds": info.get("duration"),
+            "channel": info.get("uploader") or info.get("channel"),
+            "videoQualities": video_qualities,
+            "audioQualities": audio_qualities,
+            "subtitles": subtitles,
+            "hasSubtitles": bool(subtitles)
+        })
+    except Exception as e:
+        logger.error(f"YT Info error: {e}")
+        return json_response({"ok": False, "error": str(e)}, status=500)
+
+
+async def handle_yt_download(request: web.Request) -> web.Response:
+    """POST /api/yt/download"""
+    try:
+        body = await request.json()
+    except Exception:
+        return json_response({"success": False, "error": "Invalid JSON"}, status=400)
+
+    url = body.get("url", "").strip()
+    fmt = body.get("format", "mp4").strip().lower()
+    quality = body.get("quality", "1080").strip()
+
+    if not url:
+        return json_response({"success": False, "error": "Missing 'url' parameter"}, status=400)
+
+    job_id = str(uuid.uuid4())[:12]
+    job_folder = os.path.join(YT_DOWNLOAD_DIR, job_id)
+    os.makedirs(job_folder, exist_ok=True)
+
+    YT_JOBS[job_id] = {
+        "id": job_id,
+        "status": "initializing",
+        "progress": 0,
+        "filename": None,
+        "downloadUrl": None,
+        "error": None
+    }
+
+    def _worker():
+        try:
+            YT_JOBS[job_id]["status"] = "downloading"
+            
+            def hook(d):
+                if d.get("status") == "downloading":
+                    total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                    downloaded = d.get("downloaded_bytes", 0)
+                    if total > 0:
+                        YT_JOBS[job_id]["progress"] = int((downloaded / total) * 100)
+                elif d.get("status") == "finished":
+                    YT_JOBS[job_id]["progress"] = 99
+                    YT_JOBS[job_id]["status"] = "processing"
+
+            outtmpl = os.path.join(job_folder, "%(title)s.%(ext)s")
+            if fmt == "mp3":
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'outtmpl': outtmpl,
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': quality if quality in ['128', '256', '320'] else '192',
+                    }],
+                    'progress_hooks': [hook],
+                    'quiet': True
+                }
+            else:
+                ydl_opts = {
+                    'format': f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]/best',
+                    'outtmpl': outtmpl,
+                    'merge_output_format': 'mp4',
+                    'progress_hooks': [hook],
+                    'quiet': True
+                }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                res = ydl.extract_info(url, download=True)
+                downloaded_file = ydl.prepare_filename(res)
+                if fmt == "mp3":
+                    downloaded_file = os.path.splitext(downloaded_file)[0] + ".mp3"
+                else:
+                    if not os.path.exists(downloaded_file):
+                        alt = os.path.splitext(downloaded_file)[0] + ".mp4"
+                        if os.path.exists(alt):
+                            downloaded_file = alt
+
+            filename = os.path.basename(downloaded_file)
+            YT_JOBS[job_id]["status"] = "completed"
+            YT_JOBS[job_id]["progress"] = 100
+            YT_JOBS[job_id]["filename"] = filename
+            YT_JOBS[job_id]["filepath"] = downloaded_file
+        except Exception as e:
+            logger.error(f"Job {job_id} failed: {e}")
+            YT_JOBS[job_id]["status"] = "failed"
+            YT_JOBS[job_id]["error"] = str(e)
+
+    asyncio.create_task(asyncio.to_thread(_worker))
+
+    return json_response({
+        "success": True,
+        "jobId": job_id
+    })
+
+
+async def handle_yt_status(request: web.Request) -> web.Response:
+    """GET /api/yt/status/{jobId}"""
+    job_id = request.match_info.get("jobId", "").strip()
+    job = YT_JOBS.get(job_id)
+    if not job:
+        return json_response({"error": "Job not found"}, status=404)
+
+    host = request.host
+    scheme = request.scheme
+    res = dict(job)
+    if job.get("status") == "completed" and job.get("filename"):
+        encoded_fn = urllib.parse.quote(job["filename"])
+        res["downloadUrl"] = f"{scheme}://{host}/api/yt/file/{job_id}/{encoded_fn}"
+
+    res.pop("filepath", None)
+    return json_response(res)
+
+
+async def handle_yt_file(request: web.Request) -> web.Response:
+    """GET /api/yt/file/{jobId}/{filename}"""
+    job_id = request.match_info.get("jobId", "").strip()
+    filename = request.match_info.get("filename", "").strip()
+    job = YT_JOBS.get(job_id)
+
+    if not job or not job.get("filepath") or not os.path.exists(job["filepath"]):
+        return web.Response(text="File not found or expired", status=404)
+
+    return web.FileResponse(job["filepath"], headers={
+        "Content-Disposition": f'attachment; filename="{filename}"'
+    })
+
+
+# =====================================================================
 # Health & Status Endpoint
 # =====================================================================
 async def handle_health(request: web.Request) -> web.Response:
     """GET /api/health"""
     return json_response({
         "status": "healthy",
-        "service": "4uMovies Network Unified API",
+        "service": "4uMovies Network & Media Hub Unified API",
         "platforms": {
             "netmirror": {
                 "base": "https://net.4umovies.site",
@@ -305,6 +505,10 @@ async def handle_health(request: web.Request) -> web.Response:
                 "base": "https://desitv.4umovies.site",
                 "stream_validity": "12-24 hours",
                 "required_headers": "None"
+            },
+            "youtube_downloader": {
+                "engine": "yt-dlp cloud worker (4K/1080p/MP3)",
+                "endpoints": ["/api/yt/info", "/api/yt/download", "/api/yt/status/{jobId}", "/api/yt/file/{jobId}/{fn}"]
             }
         }
     })
@@ -328,8 +532,13 @@ def create_app() -> web.Application:
     # DesiTV
     app.router.add_get("/api/desitv/serials", handle_desitv_serials)
     app.router.add_get("/api/desitv/resolve", handle_desitv_resolve)
-    # Stream Proxy
+    # Stream Proxy (Hotstar, NetMirror, Anime)
     app.router.add_get("/api/proxy/stream", handle_stream_proxy)
+    # YouTube 4K Downloader Engine (Identical to asmultiverse)
+    app.router.add_post("/api/yt/info", handle_yt_info)
+    app.router.add_post("/api/yt/download", handle_yt_download)
+    app.router.add_get("/api/yt/status/{jobId}", handle_yt_status)
+    app.router.add_get("/api/yt/file/{jobId}/{filename}", handle_yt_file)
     # Health
     app.router.add_get("/api/health", handle_health)
     return app
@@ -337,6 +546,7 @@ def create_app() -> web.Application:
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8888
-    print(f"🚀 Starting 4uMovies Network Unified REST API Server on port {port}...")
+    print(f"🚀 Starting 4uMovies Network & YouTube Hub API Server on port {port}...")
     app = create_app()
     web.run_app(app, host="0.0.0.0", port=port)
+

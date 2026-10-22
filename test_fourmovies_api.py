@@ -38,6 +38,16 @@ async def run_tests():
         except Exception as ex:
             print(f"Error on {ep}: {ex}")
 
+    print("\nTesting POST /api/yt/info:")
+    try:
+        post_resp = await client.post("/api/yt/info", json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}, timeout=30)
+        print(f"POST Status: {post_resp.status}")
+        post_data = await post_resp.json()
+        print("YT Info title:", post_data.get("title"))
+        print("Available Qualities:", [q["label"] for q in post_data.get("videoQualities", [])[:3]])
+    except Exception as ex:
+        print("Error on YT Info:", ex)
+
     await client.close()
     print("\n✅ All REST API endpoints tested and verified!")
 
