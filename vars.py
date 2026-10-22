@@ -226,13 +226,17 @@ def _find_binary(name: str, env_var: str) -> str:
     if explicit and os.path.isfile(explicit):
         return explicit
 
-    # 2. Heroku buildpack location
-    heroku_path = f"/app/vendor/ffmpeg/bin/{name}"
-    if os.path.isfile(heroku_path):
-        return heroku_path
+    # 2. Heroku buildpack locations (Aptfile & vendor ffmpeg)
+    for heroku_candidate in [
+        f"/app/.apt/usr/bin/{name}",
+        f"/app/.apt/usr/local/bin/{name}",
+        f"/app/vendor/ffmpeg/bin/{name}"
+    ]:
+        if os.path.isfile(heroku_candidate):
+            return heroku_candidate
 
     # 3. Common system paths
-    for candidate in [f"/usr/local/bin/{name}", f"/usr/bin/{name}"]:
+    for candidate in [f"/usr/local/bin/{name}", f"/usr/bin/{name}", f"/bin/{name}"]:
         if os.path.isfile(candidate):
             return candidate
 

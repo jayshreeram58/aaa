@@ -4385,6 +4385,17 @@ async def _execute_youtube_download(
         cleanup_job_temp_dir(job_temp)
 
 
+def extract_clean_user_title(raw_text: str, target_url: str) -> str:
+    """Extract clean title from user message, removing URL and stray punctuation/separators."""
+    if not raw_text or not target_url:
+        return ""
+    line = raw_text.split("\n")[0].strip()
+    replaced = line.replace(target_url, "").strip()
+    # Strip leading/trailing delimiters like :, -, |, —, –, #, *, ~, tabs, spaces
+    cleaned = re.sub(r"^[\s:\-|–—#*~]+|[\s:\-|–—#*~]+$", "", replaced).strip()
+    return cleaned
+
+
 async def _run_direct_link_job(
     job_id: str,
     client: Client,
@@ -4400,13 +4411,33 @@ async def _run_direct_link_job(
     temp_files = []
     job_temp = os.path.join(TEMP_DIR, str(user_id), job_id)
     os.makedirs(job_temp, exist_ok=True)
+
+    # 1. Resolve redirects or shorteners
+    try:
+        resolved = MediaRouter.resolve_redirect_url(url)
+        if resolved and resolved != url:
+            url = resolved
+    except Exception:
+        pass
+
     media_type = MediaRouter.classify_url(url)
+
+    # 2. If UNKNOWN or suspected shortlink, attempt automatic bypass
+    if media_type == MediaType.UNKNOWN:
+        try:
+            from bypass_service.client import async_bypass_url
+            b_res = await async_bypass_url(url)
+            if b_res and b_res.get("success") and b_res.get("bypassed_url"):
+                url = b_res["bypassed_url"]
+                media_type = MediaRouter.classify_url(url)
+        except Exception:
+            pass
 
     try:
         # --- 1. YouTube Pipeline ---
         if media_type == MediaType.YOUTUBE:
-            raw_title = text.split("\n")[0].replace(url, "").strip()
-            title = helper.safe_filename(raw_title) or f"YouTube_Lecture_{int(time.time())}"
+            user_title = extract_clean_user_title(text, url)
+            title = helper.safe_filename(user_title) if user_title else f"YouTube_Lecture_{int(time.time())}"
 
             try:
                 await status_msg.edit_text(format_download_card("Course Wallah", title, frame=0), parse_mode=enums.ParseMode.HTML)
@@ -4417,7 +4448,7 @@ async def _run_direct_link_job(
             media_data = await asyncio.to_thread(fetch_ytultra_media_data, url)
             qualities = media_data.get("qualities", []) if media_data else []
 
-            if media_data and media_data.get("title") and not raw_title:
+            if media_data and media_data.get("title") and not user_title:
                 title = helper.safe_filename(media_data["title"])
 
             duration_sec = float(media_data.get("duration") or 0) if media_data else 0.0
@@ -4506,7 +4537,8 @@ async def _run_direct_link_job(
         # --- 2. Direct PDF Pipeline ---
         elif media_type == MediaType.DIRECT_PDF:
             clean_pdf_url = parse_pdf_input(url)["url"]
-            title = MediaRouter.extract_clean_title(clean_pdf_url, text.split("\n")[0].replace(url, "").strip()) or f"Document_{int(time.time())}"
+            user_title = extract_clean_user_title(text, url)
+            title = user_title or MediaRouter.extract_clean_title(clean_pdf_url) or f"Document_{int(time.time())}"
             try:
                 await status_msg.edit_text(format_pdf_download_card("Course Wallah", title, frame=0), parse_mode=enums.ParseMode.HTML)
             except Exception:
@@ -4548,7 +4580,8 @@ async def _run_direct_link_job(
 
         # --- KGS HLS Stream Pipeline ---
         elif media_type == MediaType.KGS_HLS:
-            title = MediaRouter.extract_clean_title(url, text.split("\n")[0].replace(url, "").strip()) or f"KGS_Lecture_{int(time.time())}"
+            user_title = extract_clean_user_title(text, url)
+            title = user_title or MediaRouter.extract_clean_title(url) or f"KGS_Lecture_{int(time.time())}"
             name_clean = helper.safe_filename(title)
 
             try:
@@ -4626,7 +4659,8 @@ async def _run_direct_link_job(
 
         # --- 3. Direct M3U8 Stream Pipeline ---
         elif media_type == MediaType.DIRECT_M3U8:
-            title = MediaRouter.extract_clean_title(url, text.split("\n")[0].replace(url, "").strip()) or f"Stream_{int(time.time())}"
+            user_title = extract_clean_user_title(text, url)
+            title = user_title or MediaRouter.extract_clean_title(url) or f"Stream_{int(time.time())}"
             name_clean = helper.safe_filename(title)
 
             try:
@@ -4709,7 +4743,8 @@ async def _run_direct_link_job(
                 raw_url = parts[0].strip()
                 key = parts[1].strip()
 
-            title = helper.safe_filename(text.split("\n")[0].replace(url, "").strip()) or f"Encrypted_Lecture_{int(time.time())}"
+            user_title = extract_clean_user_title(text, url)
+            title = user_title or MediaRouter.extract_clean_title(raw_url) or f"Encrypted_Lecture_{int(time.time())}"
             name_clean = helper.safe_filename(title)
 
             try:
@@ -4775,7 +4810,8 @@ async def _run_direct_link_job(
                 key = parts[1].strip()
 
             stream_label = "Go Classes Stream" if media_type == MediaType.GO_CLASSES else "Spayee HLS Stream"
-            title = MediaRouter.extract_clean_title(raw_url, text.split("\n")[0].replace(url, "").strip()) or f"Lecture_{int(time.time())}"
+            user_title = extract_clean_user_title(text, url)
+            title = user_title or MediaRouter.extract_clean_title(raw_url) or f"Lecture_{int(time.time())}"
             name_clean = helper.safe_filename(title)
 
             try:
@@ -4835,7 +4871,8 @@ async def _run_direct_link_job(
 
         # --- 6. Direct Image Pipeline (.jpg, .jpeg, .png, .webp, etc.) ---
         elif media_type == MediaType.DIRECT_IMAGE:
-            title = MediaRouter.extract_clean_title(url, text.split("\n")[0].replace(url, "").strip()) or f"Image_{int(time.time())}"
+            user_title = extract_clean_user_title(text, url)
+            title = user_title or MediaRouter.extract_clean_title(url) or f"Image_{int(time.time())}"
             name_clean = helper.safe_filename(title)
 
             try:
@@ -4892,7 +4929,8 @@ async def _run_direct_link_job(
 
         # --- 7. Direct Video Pipeline (.mp4, .mkv, .webm, etc.) ---
         elif media_type == MediaType.DIRECT_VIDEO:
-            title = MediaRouter.extract_clean_title(url, text.split("\n")[0].replace(url, "").strip()) or f"Video_{int(time.time())}"
+            user_title = extract_clean_user_title(text, url)
+            title = user_title or MediaRouter.extract_clean_title(url) or f"Video_{int(time.time())}"
             name_clean = helper.safe_filename(title)
 
             try:
@@ -4901,8 +4939,18 @@ async def _run_direct_link_job(
                 pass
 
             print(f"[DIRECT VIDEO {job_id}] DOWNLOAD START")
-            logging.info(f"[DIRECT VIDEO {job_id}] DOWNLOAD START")
+            logging.info(f"[DIRECT VIDEO {job_id}] DOWNLOAD START: {url}")
+            
+            # 1. Attempt streaming direct video download
             v_file = await asyncio.to_thread(helper.download_direct_video, url, name_clean, None, job_temp)
+            # 2. If direct streaming failed or produced 0 bytes, fallback to yt-dlp
+            if not v_file or not os.path.exists(v_file) or os.path.getsize(v_file) == 0:
+                logging.info(f"[DIRECT VIDEO {job_id}] Direct stream produced empty file, falling back to yt-dlp...")
+                try:
+                    v_file = await helper.download_video(url, name_clean, quality="720p", user_id=user_id, custom_dir=job_temp)
+                except Exception as _e_yt:
+                    logging.warning(f"[DIRECT VIDEO {job_id}] yt-dlp fallback error: {_e_yt}")
+
             if not v_file or not os.path.exists(v_file) or os.path.getsize(v_file) == 0:
                 raise RuntimeError("Direct video download produced empty or missing file.")
             print(f"[DIRECT VIDEO {job_id}] DOWNLOAD SUCCESS")
@@ -4996,7 +5044,8 @@ async def _run_direct_link_job(
                 await status_msg.edit_text(f"❌ <b>Lecture Resolution Failed</b>\n\n<blockquote>{lec_res.error or 'No playable video or PDF found in source.'}</blockquote>")
                 return
 
-            item_title = lec_res.title or helper.safe_filename(text.split("\n")[0].replace(url, "").strip()) or f"Lecture_{int(time.time())}"
+            user_title = extract_clean_user_title(text, url)
+            item_title = user_title or lec_res.title or MediaRouter.extract_clean_title(url) or f"Lecture_{int(time.time())}"
             name_clean = helper.safe_filename(item_title)
 
             # Order: VIDEO -> PDF
@@ -5121,11 +5170,100 @@ async def _run_direct_link_job(
             except Exception:
                 pass
 
-        # --- 7. Unsupported / Unknown URL ---
+        # --- 8. Universal Smart Fallback (Any Video/Audio/Stream site or PDF) ---
         else:
+            user_title = extract_clean_user_title(text, url)
+            title = user_title or MediaRouter.extract_clean_title(url) or f"Media_{int(time.time())}"
+            name_clean = helper.safe_filename(title)
+
+            try:
+                await status_msg.edit_text(format_download_card("Course Wallah", title, frame=0), parse_mode=enums.ParseMode.HTML)
+            except Exception:
+                pass
+
+            print(f"[UNIVERSAL {job_id}] STARTING AUTO-DETECTION DOWNLOAD: {url}")
+            logging.info(f"[UNIVERSAL {job_id}] Checking media via yt-dlp & direct stream: {url}")
+
+            # 1. Attempt yt-dlp download (supports 1500+ sites, embeds, direct streams)
+            v_file = None
+            try:
+                v_file = await helper.download_video(url, name_clean, quality="720p", user_id=user_id, custom_dir=job_temp)
+            except Exception as _ytdl_err:
+                logging.info(f"[UNIVERSAL {job_id}] yt-dlp probe error: {_ytdl_err}")
+
+            # 2. If yt-dlp did not succeed, attempt direct streaming download
+            if not v_file or not os.path.exists(v_file) or os.path.getsize(v_file) == 0:
+                try:
+                    v_file = await asyncio.to_thread(helper.download_direct_video, url, name_clean, None, job_temp)
+                except Exception as _dd_err:
+                    logging.info(f"[UNIVERSAL {job_id}] Direct stream download error: {_dd_err}")
+
+            # 3. If file successfully retrieved
+            if v_file and os.path.exists(v_file) and os.path.getsize(v_file) > 0:
+                temp_files.append(v_file)
+
+                if jm.cancel_flags.get(job_id, False):
+                    return
+
+                final_v_file = v_file
+                if WATERMARK_TEXT and WATERMARK_TEXT not in ("/d", "no", "none", ""):
+                    try:
+                        await status_msg.edit_text(format_watermark_card(title, frame=0), parse_mode=enums.ParseMode.HTML)
+                    except Exception:
+                        pass
+                    wm_res = await asyncio.to_thread(helper.apply_video_watermark, v_file, WATERMARK_TEXT, WATERMARK_FILE)
+                    if wm_res and os.path.exists(wm_res):
+                        temp_files.append(wm_res)
+                        final_v_file = wm_res
+
+                v_thumb = await asyncio.to_thread(helper.extract_or_download_thumbnail, final_v_file, None, None)
+                if v_thumb and os.path.exists(v_thumb):
+                    temp_files.append(v_thumb)
+
+                caption = (
+                    f"🎬 <b>Title:</b> {title}\n"
+                    f"📺 <b>Type:</b> Web Media Stream\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🤖 <b>Downloaded via:</b> {CREDIT}"
+                )
+
+                if jm.cancel_flags.get(job_id, False):
+                    return
+
+                try:
+                    await status_msg.edit_text(format_upload_card(title, frame=0), parse_mode=enums.ParseMode.HTML)
+                except Exception:
+                    pass
+
+                await helper.send_vid(
+                    client,
+                    status_msg,
+                    caption,
+                    final_v_file,
+                    v_thumb,
+                    title,
+                    status_msg,
+                    message.chat.id,
+                    parse_mode=enums.ParseMode.HTML,
+                    user_id=user_id,
+                    bot_id=bot_ctx.bot_id if bot_ctx else None
+                )
+                try:
+                    await status_msg.delete()
+                except Exception:
+                    pass
+                return
+
+            # If all automated checks failed to download any playable media:
             await status_msg.edit_text(
-                "❌ <b>Unsupported URL Format</b>\n\n"
-                "<blockquote>The provided link could not be classified into any supported video, HLS stream, PDF, or course format.</blockquote>",
+                "❌ <b>Unsupported URL or Content Unavailable</b>\n\n"
+                "<blockquote>The provided link could not be downloaded as video, audio, stream, or document.\n\n"
+                "💡 <b>Tips & Supported Formats:</b>\n"
+                "• YouTube, Vimeo, Dailymotion, GDrive, social media links\n"
+                "• Direct MP4, MKV, WebM, M3U8, HLS streams\n"
+                "• Direct PDF documents (use <code>url*password</code> if locked)\n"
+                "• Indian shorteners (GPLinks, Droplink, TinyURL, etc.)\n"
+                "• Custom title: <code>Title : URL</code></blockquote>",
                 parse_mode=enums.ParseMode.HTML
             )
             return
@@ -5182,7 +5320,7 @@ async def direct_message_handler(client: Client, message: Message):
     if not url_match:
         return
 
-    url = url_match.group(0)
+    url = url_match.group(0).rstrip(")>]\"'.,;")
     user_id = message.from_user.id
     user_name = message.from_user.first_name or "User"
     bot_ctx = get_bot_context(client)

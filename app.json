@@ -39,9 +39,19 @@
       "value": "",
       "required": true
     },
-    "OWNER_ID": {
-      "description": "Your Telegram numeric user ID (e.g. 5432109876)",
+    "BOT_2_TOKEN": {
+      "description": "Secondary Telegram Bot Token for high-load multi-bot load balancing (Optional)",
       "value": "",
+      "required": false
+    },
+    "BOT_3_TOKEN": {
+      "description": "Tertiary Telegram Bot Token for multi-bot scaling (Optional)",
+      "value": "",
+      "required": false
+    },
+    "OWNER_ID": {
+      "description": "Your Telegram numeric user ID (e.g. 8738736556)",
+      "value": "8738736556",
       "required": true
     },
     "GITHUB_TOKEN": {
