@@ -37,6 +37,7 @@ class JobCheckpoint:
     current_index: int = 0  # 0-based index
     completed_indices: List[int] = field(default_factory=list)
     failed_indices: List[int] = field(default_factory=list)
+    skipped_indices: List[int] = field(default_factory=list)
     current_item_title: str = ""
     phase: str = "QUEUED"  # QUEUED, DOWNLOADING, PROCESSING, UPLOADING, DONE
     status: str = "QUEUED"  # QUEUED, DOWNLOADING, PROCESSING, UPLOADING, PAUSED, CANCELLED, COMPLETED, FAILED, RECOVERING

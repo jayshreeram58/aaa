@@ -843,17 +843,103 @@ def get_dot_animation(frame: int = 0) -> str:
     return "·" * count
 
 
+def format_unified_progress_card(
+    course_name: str,
+    current_title: str,
+    total_items: int,
+    completed: int = 0,
+    failed: int = 0,
+    skipped: int = 0,
+    phase: str = "Downloading",
+    frame: int = 0,
+    unit_title: Optional[str] = None,
+    subject_name: Optional[str] = None,
+    item_index: Optional[int] = None
+) -> str:
+    """
+    Renders the unified, rich Course Wallah task progress card.
+    Clearly shows:
+    - Overall Progress (%) with visual bar
+    - Total items
+    - Successful items (✅)
+    - Failed items (❌)
+    - Pending items (⏳)
+    - Skipped items (⏩)
+    - Current item title & phase animation
+    """
+    total = max(1, total_items)
+    processed = completed + failed + skipped
+    pending = max(0, total - processed)
+    percent = (processed / total * 100.0)
+    percent = min(100.0, max(0.0, percent))
+    bar = make_progress_bar(percent)
+
+    dots = get_dot_animation(frame)
+    bullets = get_bullet_animation(frame)
+    curr_idx = item_index if item_index is not None else min(total, processed + 1)
+    clean_title = (current_title or "Processing Item")[:45]
+    clean_course = (course_name or "Course Wallah")[:35]
+
+    unit_line = f"│ 📌 <b>Unit:</b> {unit_title[:32]}\n" if unit_title and unit_title != "General" else ""
+    subj_line = f"│ 📝 <b>Subject:</b> {subject_name[:32]}\n" if subject_name and subject_name != "General" else ""
+
+    return (
+        "╭──────────────────────────────╮\n"
+        "│       🎓 <b>COURSE WALLAH</b>     │\n"
+        "│                              │\n"
+        f"│    🔄 <b>{phase.upper()} {dots}</b>    │\n"
+        "│                              │\n"
+        f"│ 📚 <b>Course:</b> {clean_course}\n"
+        f"│ 🎬 <b>Current:</b> <code>{clean_title}</code>\n"
+        f"{subj_line}{unit_line}"
+        "│                              │\n"
+        f"│ 📊 <b>Progress:</b> <code>[{bar}]</code> <b>{percent:5.1f}%</b>\n"
+        f"│ 🔢 <b>Total Items:</b>  <b>{total}</b>\n"
+        f"│ ✅ <b>Successful:</b>   <b>{completed}</b>\n"
+        f"│ ❌ <b>Failed:</b>       <b>{failed}</b>\n"
+        f"│ ⏳ <b>Pending:</b>      <b>{pending}</b>\n"
+        f"│ ⏩ <b>Skipped:</b>      <b>{skipped}</b>\n"
+        "│                              │\n"
+        f"│        {bullets}             │\n"
+        f"│   <i>Item {curr_idx} of {total} ({phase.lower()})</i>   │\n"
+        "╰──────────────────────────────╯"
+    )
+
+
 def format_download_card(
     course_name: str,
     title: str,
     unit_title: Optional[str] = None,
     subject_name: Optional[str] = None,
-    frame: int = 0
+    frame: int = 0,
+    total_items: Optional[int] = None,
+    current_index: Optional[int] = None,
+    success_count: Optional[int] = None,
+    failed_count: Optional[int] = None,
+    pending_count: Optional[int] = None,
+    skipped_count: Optional[int] = None,
+    phase: Optional[str] = "Downloading"
 ) -> str:
     """
     Builds a premium animated Course Wallah download card.
-    Strictly avoids exposing raw technical speeds, bytes, or FFmpeg statistics to Telegram users.
+    If total_items is provided (> 1 or explicit), formats with full batch metrics (percent, success, fail, pending, skip).
+    Otherwise renders clean single-item download card.
     """
+    if total_items is not None and total_items > 0:
+        return format_unified_progress_card(
+            course_name=course_name,
+            current_title=title,
+            total_items=total_items,
+            completed=success_count or 0,
+            failed=failed_count or 0,
+            skipped=skipped_count or 0,
+            phase=phase or "Downloading",
+            frame=frame,
+            unit_title=unit_title,
+            subject_name=subject_name,
+            item_index=current_index
+        )
+
     dots = get_dot_animation(frame)
     bullets = get_bullet_animation(frame)
     clean_title = (title or "Lecture")[:45]
@@ -875,6 +961,42 @@ def format_download_card(
         f"│        {bullets}           │\n"
         "│   <i>Preparing your lecture</i>    │\n"
         "╰────────────────────────────╯"
+    )
+
+
+def build_job_stopped_failure_card(
+    course_name: str,
+    lecture_title: str,
+    lecture_index: int,
+    total_items: int,
+    error_reason: str,
+    success_count: int = 0,
+    failed_count: int = 0,
+    skipped_count: int = 0,
+    credit: Optional[str] = None
+) -> str:
+    """Card shown when a batch job is stopped immediately upon item failure."""
+    pending_count = max(0, total_items - (success_count + failed_count + skipped_count))
+    clean_course = (course_name or "Course Wallah")[:40]
+    clean_title = (lecture_title or "Lecture")[:50]
+    clean_err = (error_reason or "Unspecified download failure")[:120]
+
+    return (
+        "🛑 <b>JOB STOPPED ON FAILURE</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "⚠️ <i>Download stopped immediately upon failure to prevent broken consecutive downloads.</i>\n\n"
+        f"📚 <b>Course:</b> {clean_course}\n"
+        f"🎬 <b>Failed Item:</b> {clean_title} (Item {lecture_index}/{total_items})\n"
+        f"❌ <b>Error:</b> <code>{clean_err}</code>\n\n"
+        "📊 <b>Progress Summary:</b>\n"
+        f"• 🔢 <b>Total Items:</b> {total_items}\n"
+        f"• ✅ <b>Successful:</b> {success_count}\n"
+        f"• ❌ <b>Failed:</b> {failed_count}\n"
+        f"• ⏳ <b>Pending (Halted):</b> {pending_count}\n"
+        f"• ⏩ <b>Skipped:</b> {skipped_count}\n\n"
+        "💡 <i>Fix the underlying issue and use <code>/resume</code> to continue from this item.</i>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 <b>{credit or 'Course Wallah'}</b>"
     )
 
 

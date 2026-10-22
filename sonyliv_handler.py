@@ -313,8 +313,57 @@ def build_sony_catalog_panel() -> tuple[str, InlineKeyboardMarkup]:
 
 
 # =========================================================================
-# ASYNC HIGH-SPEED STREAM DOWNLOADER WITH LIVE PROGRESS
+# ASYNC HIGH-SPEED STREAM DOWNLOADER WITH LIVE PROGRESS & AS MULTIVERSE
 # =========================================================================
+
+def resolve_sony_stream(ep_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Resolves video stream for SonyLIV episode.
+    Primary: AS Multiverse endpoint (https://asmultiverse.site/yt-down/stream.php?id={ep_id})
+    which bypasses Heroku datacenter 403 Forbidden blocks and provides 1080p full quality.
+    Fallback: Direct SonyLIV Akamai token API.
+    """
+    # 1. Try AS Multiverse first
+    try:
+        asm_url = f"https://asmultiverse.site/yt-down/stream.php?id={ep_id}"
+        req = urllib.request.Request(
+            asm_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Referer": "https://asmultiverse.site/",
+                "Accept": "*/*"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status == 200:
+                body = resp.read(2048).decode("utf-8", errors="replace")
+                if "<MPD" in body or "#EXTM3U" in body:
+                    logger.info(f"[ASMultiverse] Resolved full 1080p stream for ep {ep_id}")
+                    return {
+                        "success": True,
+                        "source": "asmultiverse",
+                        "streamUrl": asm_url
+                    }
+    except Exception as asm_e:
+        logger.debug(f"[ASMultiverse] ep {ep_id} check notice: {asm_e}")
+
+    # 2. Fallback to Direct SonyLIV
+    try:
+        direct_res = sony.resolve_video_stream(ep_id)
+        if direct_res.get("success"):
+            hls = direct_res.get("hlsUrl") or direct_res.get("dashUrl")
+            if hls:
+                logger.info(f"[DirectSonyLIV] Resolved stream for ep {ep_id}")
+                return {
+                    "success": True,
+                    "source": "direct",
+                    "streamUrl": hls
+                }
+    except Exception as dir_e:
+        logger.warning(f"[DirectSonyLIV] Stream resolution failed for ep {ep_id}: {dir_e}")
+
+    return None
+
 
 async def download_sony_stream_with_progress(
     stream_url: str,
@@ -327,8 +376,8 @@ async def download_sony_stream_with_progress(
     total_eps_in_season: Any
 ) -> bool:
     """
-    Downloads SonyLIV HLS M3U8 stream with ffmpeg/yt-dlp and updates status message
-    with real-time percentage progress.
+    Downloads SonyLIV stream (DASH MPD from AS Multiverse or HLS M3U8)
+    with yt-dlp or ffmpeg, updating status message with real-time speed & size.
     """
     if output_path.exists():
         try:
@@ -336,6 +385,69 @@ async def download_sony_stream_with_progress(
         except OSError:
             pass
 
+    # 1. Primary: yt-dlp (handles AS Multiverse DASH MPD with separate video+audio multiplexing)
+    ytdlp_cmd = [
+        "yt-dlp",
+        "--no-warnings",
+        "--add-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "--add-headers", "Referer: https://asmultiverse.site/",
+        "-f", "bestvideo[height<=1080]+bestaudio/best",
+        "--merge-output-format", "mp4",
+        "-o", str(output_path),
+        stream_url
+    ]
+
+    logger.info(f"Downloading SonyLIV Ep {ep_num}: {show_title} via yt-dlp -> {output_path.name}")
+    start_time = time.time()
+    last_update = 0.0
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *ytdlp_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        while True:
+            if proc.returncode is not None:
+                break
+
+            now = time.time()
+            if now - last_update >= 4.0:
+                last_update = now
+                current_bytes = output_path.stat().st_size if output_path.exists() else 0
+                elapsed = max(0.1, now - start_time)
+                speed = current_bytes / elapsed
+
+                try:
+                    card_text = (
+                        f"🎬 <b>SonyLIV High-Speed 1080p Downloader</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📺 <b>Show:</b> <b>{show_title}</b>\n"
+                        f"📌 <b>Season:</b> {season_num} | <b>Episode:</b> {ep_num}/{total_eps_in_season}\n"
+                        f"📝 <b>Title:</b> <i>{ep_title[:45]}</i>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📥 <b>Status:</b> <b>Downloading 1080p Stream (AS Multiverse)...</b>\n"
+                        f"💾 <b>Downloaded:</b> <code>{hrb(current_bytes)}</code>\n"
+                        f"⚡ <b>Speed:</b> <code>{hrb(speed)}/s</code>\n"
+                        f"⏱️ <b>Elapsed:</b> <code>{hrt(elapsed)}</code>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🤖 <b>Powered by {CREDIT}</b>"
+                    )
+                    await status_message.edit_text(card_text, parse_mode=enums.ParseMode.HTML)
+                except Exception:
+                    pass
+
+            await asyncio.sleep(1.0)
+
+        await proc.wait()
+    except Exception as ytdlp_err:
+        logger.warning(f"yt-dlp launch notice: {ytdlp_err}")
+
+    if output_path.exists() and output_path.stat().st_size > 1024 * 50:
+        return True
+
+    # 2. Fallback: FFmpeg
     ffmpeg_bin = os.environ.get("FFMPEG_PATH") or "ffmpeg"
     cmd = [
         ffmpeg_bin,
@@ -348,54 +460,19 @@ async def download_sony_stream_with_progress(
         str(output_path)
     ]
 
-    logger.info(f"Downloading SonyLIV Ep {ep_num}: {show_title} -> {output_path.name}")
+    logger.info(f"Falling back to ffmpeg for SonyLIV Ep {ep_num}: {show_title}")
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
+        await proc.wait()
     except Exception as e:
-        logger.error(f"Failed to launch ffmpeg: {e}")
-        return False
+        logger.error(f"FFmpeg fallback failed: {e}")
 
-    start_time = time.time()
-    last_update = 0.0
-
-    while True:
-        if proc.returncode is not None:
-            break
-
-        now = time.time()
-        if now - last_update >= 4.0:
-            last_update = now
-            current_bytes = output_path.stat().st_size if output_path.exists() else 0
-            elapsed = max(0.1, now - start_time)
-            speed = current_bytes / elapsed
-
-            try:
-                card_text = (
-                    f"🎬 <b>SonyLIV High-Speed 1080p Downloader</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📺 <b>Show:</b> <b>{show_title}</b>\n"
-                    f"📌 <b>Season:</b> {season_num} | <b>Episode:</b> {ep_num}/{total_eps_in_season}\n"
-                    f"📝 <b>Title:</b> <i>{ep_title[:45]}</i>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📥 <b>Status:</b> <b>Downloading HLS Stream...</b>\n"
-                    f"💾 <b>Downloaded:</b> <code>{hrb(current_bytes)}</code>\n"
-                    f"⚡ <b>Speed:</b> <code>{hrb(speed)}/s</code>\n"
-                    f"⏱️ <b>Elapsed:</b> <code>{hrt(elapsed)}</code>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🤖 <b>Powered by {CREDIT}</b>"
-                )
-                await status_message.edit_text(card_text, parse_mode=enums.ParseMode.HTML)
-            except Exception:
-                pass
-
-        await asyncio.sleep(1.0)
-
-    await proc.wait()
     return output_path.exists() and output_path.stat().st_size > 1024 * 50
+
 
 
 # =========================================================================
@@ -635,19 +712,35 @@ async def sonyliv_cmd(client: Client, message: Message, target_show_id: Optional
                 skipped_count += 1
                 continue
 
-            # Resolve video stream
+            # Resolve video stream (AS Multiverse primary to bypass Heroku 403)
             try:
-                stream_res = await asyncio.to_thread(sony.resolve_video_stream, ep_id)
+                stream_res = await asyncio.to_thread(resolve_sony_stream, ep_id)
             except Exception as stream_err:
                 logger.warning(f"Failed to resolve stream for ep {ep_id}: {stream_err}")
-                continue
+                stream_res = None
 
-            if not stream_res.get("success"):
-                continue
+            if not stream_res or not stream_res.get("streamUrl"):
+                logger.error(f"[SonyLIV] Ep {ep_id} stream resolution failed. Stopping job immediately.")
+                err_text = (
+                    f"🛑 <b>SonyLIV Job Stopped on Failure</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⚠️ <i>Download stopped immediately upon stream resolution failure.</i>\n\n"
+                    f"🎬 <b>Show:</b> <b>{show_title}</b>\n"
+                    f"📌 <b>Failed Episode:</b> Episode {ep_num} (<code>{ep_id}</code>)\n"
+                    f"📝 <b>Title:</b> {ep_title}\n"
+                    f"❌ <b>Error:</b> <code>Unable to resolve stream from AS Multiverse or Direct SonyLIV</code>\n\n"
+                    f"📊 <b>Summary:</b>\n"
+                    f"• ✅ <b>Uploaded:</b> {uploaded_count}\n"
+                    f"• ⏩ <b>Skipped:</b> {skipped_count}\n"
+                    f"• ⏳ <b>Pending (Halted):</b> {max(0, total_in_season - ep_num)}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🤖 <b>{CREDIT}</b>"
+                )
+                await editable.edit_text(err_text, parse_mode=enums.ParseMode.HTML)
+                _SONY_STOP_REQUESTED = True
+                break
 
-            hls_url = stream_res.get("hlsUrl") or stream_res.get("dashUrl")
-            if not hls_url:
-                continue
+            hls_url = stream_res.get("streamUrl")
 
             # Local temp files
             temp_vid = TEMP_DOWNLOAD_DIR / f"sony_{target_show_id}_s{s_idx}_ep{ep_num}_{int(time.time())}.mp4"
@@ -676,7 +769,25 @@ async def sonyliv_cmd(client: Client, message: Message, target_show_id: Optional
                 if temp_thumb.exists():
                     try: temp_thumb.unlink()
                     except Exception: pass
-                continue
+                logger.error(f"[SonyLIV] Ep {ep_id} download failed. Stopping job immediately.")
+                err_text = (
+                    f"🛑 <b>SonyLIV Job Stopped on Failure</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⚠️ <i>Download failed and was stopped immediately to prevent consecutive errors.</i>\n\n"
+                    f"🎬 <b>Show:</b> <b>{show_title}</b>\n"
+                    f"📌 <b>Failed Episode:</b> Episode {ep_num} (<code>{ep_id}</code>)\n"
+                    f"📝 <b>Title:</b> {ep_title}\n"
+                    f"❌ <b>Error:</b> <code>Stream download produced empty or corrupt file</code>\n\n"
+                    f"📊 <b>Summary:</b>\n"
+                    f"• ✅ <b>Uploaded:</b> {uploaded_count}\n"
+                    f"• ⏩ <b>Skipped:</b> {skipped_count}\n"
+                    f"• ⏳ <b>Pending (Halted):</b> {max(0, total_in_season - ep_num)}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🤖 <b>{CREDIT}</b>"
+                )
+                await editable.edit_text(err_text, parse_mode=enums.ParseMode.HTML)
+                _SONY_STOP_REQUESTED = True
+                break
 
             # Apply watermark if enabled
             final_vid = str(temp_vid)
@@ -766,21 +877,26 @@ async def sonyliv_cmd(client: Client, message: Message, target_show_id: Optional
                 if uploaded_count % 3 == 0:
                     await asyncio.to_thread(sync_sony_show_to_github, target_show_id, show_title, show_obj)
 
-    # Final GitHub Sync
-    show_obj["episodes"] = [episodes_map[k] for k in sorted(episodes_map.keys())]
-    show_obj["lastUpdated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    pushed = await asyncio.to_thread(sync_sony_show_to_github, target_show_id, show_title, show_obj)
+    # Final GitHub Sync: ONLY IF AT LEAST ONE EPISODE WAS UPLOADED!
+    pushed = False
+    if uploaded_count > 0:
+        show_obj["episodes"] = [episodes_map[k] for k in sorted(episodes_map.keys())]
+        show_obj["lastUpdated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        pushed = await asyncio.to_thread(sync_sony_show_to_github, target_show_id, show_title, show_obj)
+    else:
+        logger.info(f"Skipping GitHub sync for {show_title} because 0 episodes were uploaded.")
 
-    await editable.edit_text(
-        f"🎉 <b>SonyLIV Batch Completed!</b>\n\n"
-        f"🎬 <b>Show:</b> <b>{show_title}</b> (<code>{target_show_id}</code>)\n"
-        f"✅ <b>Uploaded in this run:</b> {uploaded_count} episodes\n"
-        f"⏩ <b>Skipped (Already in channel):</b> {skipped_count} episodes\n"
-        f"📊 <b>Total in JSON Catalog:</b> {len(show_obj['episodes'])} episodes\n"
-        f"🌐 <b>GitHub JSON Sync:</b> {'✅ Synced to GitHub repository' if pushed else '💾 Saved locally in data/shows/'}\n"
-        f"📢 <b>Destination Channel:</b> <code>{target_channel_id}</code>",
-        parse_mode=enums.ParseMode.HTML
-    )
+    if not _SONY_STOP_REQUESTED:
+        await editable.edit_text(
+            f"🎉 <b>SonyLIV Batch Completed!</b>\n\n"
+            f"🎬 <b>Show:</b> <b>{show_title}</b> (<code>{target_show_id}</code>)\n"
+            f"✅ <b>Uploaded in this run:</b> {uploaded_count} episodes\n"
+            f"⏩ <b>Skipped (Already in channel):</b> {skipped_count} episodes\n"
+            f"📊 <b>Total in JSON Catalog:</b> {len(show_obj['episodes'])} episodes\n"
+            f"🌐 <b>GitHub JSON Sync:</b> {'✅ Synced to GitHub repository' if pushed else '💾 Saved locally in data/shows/'}\n"
+            f"📢 <b>Destination Channel:</b> <code>{target_channel_id}</code>",
+            parse_mode=enums.ParseMode.HTML
+        )
 
 
 async def sonyliv_callback_handler(client: Client, query: CallbackQuery):

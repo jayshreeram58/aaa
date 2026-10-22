@@ -128,8 +128,10 @@ from utils import (
     is_appx_url,
     is_direct_video_url,
     build_failure_card,
+    build_job_stopped_failure_card,
     sanitize_error_message,
     format_watermark_card,
+    format_unified_progress_card,
     format_download_card,
     format_merging_card,
     format_processing_card,
@@ -2331,7 +2333,13 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                 title=item.title,
                 unit_title=active_unit.title if active_unit else None,
                 subject_name=course_data.subject if course_data.subject != "General" else None,
-                frame=0
+                frame=0,
+                total_items=total_items,
+                current_index=i + 1,
+                success_count=len(job.completed_indices),
+                failed_count=len(job.failed_indices),
+                skipped_count=len(getattr(job, "skipped_indices", [])),
+                phase="Downloading"
             )
             try:
                 prog_msg = await bot_client.send_message(job.chat_id, prog_text, disable_web_page_preview=True, parse_mode=enums.ParseMode.HTML)
@@ -3195,8 +3203,32 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                     "lecture_status": "FAILED",
                     "failure_reason": err_msg_full
                 })
+                job.status = "STOPPED_ON_FAILURE"
                 db.save_job(job.to_dict())
                 logger.error(f"[JOB {job_id}] Item {i+1} failed: {err_msg_full}")
+
+                # Immediate Fail-Stop: Halt job immediately on failure
+                stop_card = build_job_stopped_failure_card(
+                    course_name=b_name,
+                    lecture_title=item.title,
+                    lecture_index=i + 1,
+                    total_items=total_items,
+                    error_reason=err_msg_full,
+                    success_count=len(job.completed_indices),
+                    failed_count=len(job.failed_indices),
+                    skipped_count=len(getattr(job, "skipped_indices", [])),
+                    credit=credit or CREDIT
+                )
+                try:
+                    await bot_client.send_message(
+                        job.chat_id,
+                        stop_card,
+                        parse_mode=enums.ParseMode.HTML
+                    )
+                except Exception:
+                    pass
+                manager.cancel_flags[job_id] = True
+                break
 
         except FloodWait as fw:
             logger.warning(f"FloodWait hit: sleeping {fw.value}s")
@@ -3233,6 +3265,7 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                 "lecture_status": "FAILED",
                 "failure_reason": sanitize_error_message(str(item_err))
             })
+            job.status = "STOPPED_ON_FAILURE"
             db.save_job(job.to_dict())
             fail_card = build_failure_card(
                 resource_type="LECTURE",
@@ -3256,6 +3289,29 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
                 )
             except Exception:
                 pass
+
+            # Immediate Fail-Stop: Halt job immediately on failure
+            stop_card = build_job_stopped_failure_card(
+                course_name=b_name,
+                lecture_title=item.title,
+                lecture_index=i + 1,
+                total_items=total_items,
+                error_reason=str(item_err),
+                success_count=len(job.completed_indices),
+                failed_count=len(job.failed_indices),
+                skipped_count=len(getattr(job, "skipped_indices", [])),
+                credit=credit or CREDIT
+            )
+            try:
+                await bot_client.send_message(
+                    job.chat_id,
+                    stop_card,
+                    parse_mode=enums.ParseMode.HTML
+                )
+            except Exception:
+                pass
+            manager.cancel_flags[job_id] = True
+            break
 
         finally:
             if prog_msg:

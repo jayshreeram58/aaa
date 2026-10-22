@@ -2,3 +2,6 @@ ffmpeg
 aria2
 fonts-dejavu-core
 libmagic1
+libpulse0
+libpulse-mainloop-glib0
+pulseaudio

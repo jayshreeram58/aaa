@@ -216,12 +216,14 @@ GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip().strip("'\"")
 def _configure_linux_library_paths():
     """
     Configures LD_LIBRARY_PATH and PATH on Linux / Heroku environments.
-    Fixes Ubuntu shared library errors like:
+    Dynamically discovers all .so directories under /app/.apt to fix
+    Ubuntu shared library errors like:
     'error while loading shared libraries: libpulsecommon-16.1.so'
     """
     import sys
     if sys.platform != "win32":
-        apt_lib_dirs = [
+        all_lib_dirs = [
+            "/app/vendor/ffmpeg/bin",
             "/app/.apt/usr/lib/x86_64-linux-gnu/pulseaudio",
             "/app/.apt/usr/lib/x86_64-linux-gnu",
             "/app/.apt/usr/lib",
@@ -231,14 +233,22 @@ def _configure_linux_library_paths():
             "/usr/lib/x86_64-linux-gnu",
             "/usr/lib"
         ]
+        # Recursively scan /app/.apt for any directories containing shared libraries (.so)
+        if os.path.exists("/app/.apt"):
+            for root, dirs, files in os.walk("/app/.apt"):
+                if any(f.endswith(".so") or ".so." in f for f in files):
+                    if root not in all_lib_dirs:
+                        all_lib_dirs.append(root)
+
         cur_ld = os.environ.get("LD_LIBRARY_PATH", "")
-        valid_dirs = [d for d in apt_lib_dirs if os.path.isdir(d)]
+        valid_dirs = [d for d in all_lib_dirs if os.path.isdir(d)]
         if valid_dirs:
             os.environ["LD_LIBRARY_PATH"] = ":".join(valid_dirs) + (f":{cur_ld}" if cur_ld else "")
 
-        # Also ensure static /app/vendor/ffmpeg/bin and /app/.apt/usr/bin are in PATH
+        # Also ensure static /app/vendor/ffmpeg/bin, /app/data/bin and /app/.apt/usr/bin are in PATH
         bin_dirs = [
             "/app/vendor/ffmpeg/bin",
+            "/app/data/bin",
             "/app/.apt/usr/bin",
             "/app/.apt/bin"
         ]
@@ -254,10 +264,35 @@ def _can_run(binary_path: str) -> bool:
     """Verifies that a binary runs and does not fail with library/missing .so errors."""
     import subprocess
     try:
-        r = subprocess.run([binary_path, "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+        r = subprocess.run([binary_path, "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4, env=os.environ.copy())
         return r.returncode == 0
     except Exception:
         return False
+
+
+def _ensure_static_binary(name: str) -> str:
+    """Downloads a self-contained static Linux binary if system/apt version is broken or missing."""
+    import sys, urllib.request, stat
+    if sys.platform == "win32" or name != "ffmpeg":
+        return ""
+    target_dir = os.path.join(DATA_DIR, "bin")
+    os.makedirs(target_dir, exist_ok=True)
+    target_bin = os.path.join(target_dir, "ffmpeg")
+    if os.path.isfile(target_bin) and _can_run(target_bin):
+        return target_bin
+
+    url = "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-linux-x64"
+    try:
+        logger.info(f"Downloading static {name} fallback to {target_bin}...")
+        urllib.request.urlretrieve(url, target_bin)
+        st = os.stat(target_bin)
+        os.chmod(target_bin, st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        if _can_run(target_bin):
+            logger.info(f"Static {name} downloaded and verified successfully.")
+            return target_bin
+    except Exception as e:
+        logger.warning(f"Failed to auto-download static {name}: {e}")
+    return ""
 
 
 def _find_binary(name: str, env_var: str) -> str:
@@ -265,10 +300,11 @@ def _find_binary(name: str, env_var: str) -> str:
     Finds a working system binary (ffmpeg / ffprobe) in order:
     1. Explicit env var (FFMPEG_PATH / FFPROBE_PATH)
     2. Heroku static vendor buildpack (/app/vendor/ffmpeg/bin/<name>)
-    3. Standard system paths (/usr/bin, /usr/local/bin)
-    4. PATH lookup
-    5. Heroku Aptfile path (/app/.apt/usr/bin/<name>)
-    6. Falls back to best candidate
+    3. Standalone downloaded binary (/app/data/bin/<name>)
+    4. Standard system paths (/usr/bin, /usr/local/bin)
+    5. PATH lookup
+    6. Heroku Aptfile path (/app/.apt/usr/bin/<name>)
+    7. Dynamic static binary download fallback
     """
     import shutil as _shutil
 
@@ -282,22 +318,32 @@ def _find_binary(name: str, env_var: str) -> str:
     if os.path.isfile(vendor_candidate) and _can_run(vendor_candidate):
         return vendor_candidate
 
-    # 3. Common system paths
+    # 3. Standalone verified binary in data directory
+    data_bin = os.path.join(DATA_DIR, "bin", name)
+    if os.path.isfile(data_bin) and _can_run(data_bin):
+        return data_bin
+
+    # 4. Common system paths
     for candidate in [f"/usr/bin/{name}", f"/usr/local/bin/{name}", f"/bin/{name}"]:
         if os.path.isfile(candidate) and _can_run(candidate):
             return candidate
 
-    # 4. PATH lookup
+    # 5. PATH lookup
     found = _shutil.which(name)
     if found and _can_run(found):
         return found
 
-    # 5. Heroku apt locations (with libpulsecommon LD_LIBRARY_PATH configured)
+    # 6. Heroku apt locations (with discovered LD_LIBRARY_PATH configured)
     for apt_candidate in [f"/app/.apt/usr/bin/{name}", f"/app/.apt/usr/local/bin/{name}"]:
         if os.path.isfile(apt_candidate) and _can_run(apt_candidate):
             return apt_candidate
 
-    # 6. Fallback candidates
+    # 7. Static download fallback
+    static_bin = _ensure_static_binary(name)
+    if static_bin and _can_run(static_bin):
+        return static_bin
+
+    # 8. Last resort candidate
     for fallback in [vendor_candidate, f"/app/.apt/usr/bin/{name}", f"/usr/bin/{name}"]:
         if os.path.isfile(fallback):
             return fallback

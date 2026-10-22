@@ -558,7 +558,8 @@ def download_appx_m3u8(url: str, name: str, custom_headers: str = None, custom_d
         print(f"[DOWNLOAD] Downloading M3U8 stream (attempt {retry_count + 1}) with FFmpeg...")
         logging.info(f"Downloading M3U8 stream to {output}")
         try:
-            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            cur_env = os.environ.copy()
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True, env=cur_env)
             print("[DOWNLOAD] Download succeeded")
             download_success = True
             break
@@ -566,6 +567,19 @@ def download_appx_m3u8(url: str, name: str, custom_headers: str = None, custom_d
             retry_count += 1
             err_msg = exc.stderr.strip() if exc.stderr else str(exc)
             print(f"[DOWNLOAD] Retry {retry_count}/{max_retries} failed: {err_msg}")
+
+            # Dynamic auto-recovery for shared library issues (e.g. libpulsecommon-16.1.so missing)
+            if "error while loading shared libraries" in err_msg or "cannot open shared object file" in err_msg:
+                try:
+                    import vars as _v
+                    static_ff = _v._ensure_static_binary("ffmpeg")
+                    if static_ff and os.path.exists(static_ff):
+                        _v.FFMPEG_PATH = static_ff
+                        cmd[0] = static_ff
+                        print(f"[RECOVERY] Switched to static FFmpeg binary: {static_ff}")
+                except Exception as rec_err:
+                    print(f"[RECOVERY] Failed to switch FFmpeg: {rec_err}")
+
             if retry_count == max_retries:
                 print("[DOWNLOAD] All download retries failed.")
                 if os.path.exists(output):
