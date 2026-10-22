@@ -19,9 +19,12 @@
 
 Deploy your own instance in less than 60 seconds with full persistence and health checks:
 
-| Platform | One-Click Deployment Button | Supported Tier | Storage Model |
+| Platform | One-Click Deployment Button / Notebook | Supported Tier | Storage Model |
 | :--- | :---: | :---: | :---: |
 | **Google Colab** | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ramjipatel-tech/course-wallah-downloader-bot/blob/main/CourseWallah_Downloader_Colab.ipynb) | Free Tier (CPU/T4) | 100GB Disk + 1Gbps Cloud Net |
+| **Kaggle Kernel** | [![Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://github.com/ramjipatel-tech/course-wallah-downloader-bot/blob/main/CourseWallah_Downloader_Kaggle.ipynb) | Free 30h/Week (CPU/GPU) | Background Cloud Runs (9-12h) |
+| **Deepnote** | [![Launch in Deepnote](https://deepnote.com/buttons/launch-in-deepnote.svg)](https://github.com/ramjipatel-tech/course-wallah-downloader-bot/blob/main/CourseWallah_Downloader_Deepnote.ipynb) | Free Tier (Ubuntu Container) | Persistent `/work` Storage Volume |
+| **Paperspace Gradient** | [![Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://github.com/ramjipatel-tech/course-wallah-downloader-bot/blob/main/CourseWallah_Downloader_Paperspace.ipynb) | Free CPU / Free GPU | Persistent `/notebooks` Volume (6h) |
 | **Railway** | [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2Framjipatel-tech%2Fcourse-wallah-downloader-bot) | Free Trial / Hobby / Pro | Persistent Volume (`/data`) |
 | **Render** | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/ramjipatel-tech/course-wallah-downloader-bot) | Starter Worker / Standard | Persistent Disk (`/data`) |
 | **Heroku** | [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/ramjipatel-tech/course-wallah-downloader-bot) | Eco / Basic / Standard | Ephemeral Container |
