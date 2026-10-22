@@ -3,11 +3,13 @@ import re
 import sys
 import json
 import time
+import base64
 import shutil
 import asyncio
 import logging
 import subprocess
 import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Set
 
@@ -39,6 +41,11 @@ if EXPERIMENT_API_DIR.exists():
         EXPERIMENT_SHOWS_DIR.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
+
+# GitHub synchronization configuration
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
+STORYTV_GITHUB_REPO = os.environ.get("STORYTV_GITHUB_REPO", "ramjipatel-tech/storytv-api").strip()
+STORYTV_GITHUB_BRANCH = os.environ.get("STORYTV_GITHUB_BRANCH", "master").strip()
 
 OFFICIAL_API = "https://api.storytv.asia"
 STORYTV_PORTAL_API = "https://storytv.4umovies.site/api"
@@ -127,40 +134,212 @@ def get_headers() -> Dict[str, str]:
     }
 
 # =========================================================================
+# GITHUB & REMOTE REST API SYNCHRONIZATION
+# =========================================================================
+
+def github_put_file_api(file_path: str, content_dict: Any, commit_msg: str) -> bool:
+    """Pushes/updates a JSON file on GitHub using GitHub REST API."""
+    token = GITHUB_TOKEN or os.environ.get("GH_TOKEN", "").strip()
+    if not token:
+        return False
+
+    url = f"https://api.github.com/repos/{STORYTV_GITHUB_REPO}/contents/{file_path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "CourseWallah-StoryTVSync/1.0"
+    }
+
+    # 1. Check existing file SHA
+    sha = None
+    try:
+        req = urllib.request.Request(f"{url}?ref={STORYTV_GITHUB_BRANCH}", headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status == 200:
+                body = json.loads(resp.read().decode())
+                sha = body.get("sha")
+    except urllib.error.HTTPError as he:
+        if he.code == 404:
+            sha = None
+        else:
+            logger.warning(f"GitHub API SHA check error {he.code}: {he}")
+    except Exception as ge:
+        logger.debug(f"GitHub SHA check error: {ge}")
+
+    # 2. Base64 encode JSON payload
+    raw_bytes = json.dumps(content_dict, indent=2, ensure_ascii=False).encode("utf-8")
+    b64_content = base64.b64encode(raw_bytes).decode("utf-8")
+
+    payload: Dict[str, Any] = {
+        "message": commit_msg,
+        "content": b64_content,
+        "branch": STORYTV_GITHUB_BRANCH
+    }
+    if sha:
+        payload["sha"] = sha
+
+    # 3. Send PUT request to GitHub
+    try:
+        put_req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="PUT"
+        )
+        with urllib.request.urlopen(put_req, timeout=15) as put_res:
+            if put_res.status in (200, 201):
+                logger.info(f"🚀 Pushed '{file_path}' to GitHub ({STORYTV_GITHUB_REPO}) via REST API")
+                return True
+    except Exception as pe:
+        logger.warning(f"GitHub API PUT failed for '{file_path}': {pe}")
+    return False
+
+def sync_show_to_github(show_id: str, show_title: str, show_obj: Dict[str, Any]) -> bool:
+    """
+    Commits and pushes updated show JSON and catalog index to GitHub repository.
+    Supports both local Git repository commits and remote GitHub REST API commits (Colab/Docker).
+    """
+    total_eps_uploaded = len([e for e in show_obj.get("episodes", []) if e.get("telegramUrl") or e.get("status") == "uploaded"])
+
+    # 1. Update local files in all directories
+    save_show_json_data(show_id, show_obj)
+    update_shows_index(show_id, show_obj)
+
+    git_success = False
+
+    # 2. Try Local Git CLI Push first (if local git repo exists)
+    local_repo_dir = EXPERIMENT_API_DIR if (EXPERIMENT_API_DIR / ".git").exists() else None
+    if not local_repo_dir and (BASE_DIR / ".git").exists():
+        # Check if current bot repo contains data/shows
+        if (BASE_DIR / "data" / "shows").exists():
+            local_repo_dir = BASE_DIR
+
+    if local_repo_dir:
+        try:
+            rel_show_file = f"data/shows/{show_id}.json"
+            subprocess.run(["git", "add", rel_show_file, "data/shows_index.json"], cwd=str(local_repo_dir), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            commit_msg = f"update(storytv): Sync {show_title} ({show_id}) with {total_eps_uploaded} episodes [skip ci]"
+            # Commit (ignore error if nothing changed)
+            subprocess.run(["git", "commit", "-m", commit_msg], cwd=str(local_repo_dir), check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Push to origin
+            push_res = subprocess.run(["git", "push", "origin", STORYTV_GITHUB_BRANCH], cwd=str(local_repo_dir), check=False, capture_output=True, text=True)
+            if push_res.returncode == 0:
+                logger.info(f"🚀 Git pushed {show_id}.json to GitHub origin/{STORYTV_GITHUB_BRANCH}")
+                git_success = True
+            else:
+                logger.debug(f"Git push notice: {push_res.stderr.strip()[:150]}")
+        except Exception as e:
+            logger.debug(f"Local git sync notice: {e}")
+
+    # 3. Try GitHub REST API (especially on Colab or server without local git credentials)
+    if not git_success and (GITHUB_TOKEN or os.environ.get("GH_TOKEN")):
+        ok1 = github_put_file_api(
+            file_path=f"data/shows/{show_id}.json",
+            content_dict=show_obj,
+            commit_msg=f"update(storytv): Sync {show_title} ({show_id}) with {total_eps_uploaded} episodes [skip ci]"
+        )
+        # Also sync shows_index.json to GitHub API
+        idx_data = load_all_catalog_shows()
+        if idx_data:
+            github_put_file_api(
+                file_path="data/shows_index.json",
+                content_dict=idx_data,
+                commit_msg=f"update(catalog): Sync shows index for {show_title} ({show_id}) [skip ci]"
+            )
+        git_success = ok1
+
+    return git_success
+
+# =========================================================================
 # CATALOG & JSON DEDUPLICATION LOGIC
 # =========================================================================
 
 def load_all_catalog_shows() -> List[Dict[str, Any]]:
     """Loads all catalog shows (1,215 shows)."""
-    if CATALOG_PATH.exists():
-        try:
-            with open(CATALOG_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list) and len(data) > 0:
-                    return data
-        except Exception as e:
-            logger.error(f"Error loading catalog from {CATALOG_PATH}: {e}")
-
-    alt_index = BASE_DIR / "data" / "shows_index.json"
-    if alt_index.exists():
-        try:
-            with open(alt_index, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list) and len(data) > 0:
-                    return data
-        except Exception:
-            pass
-
+    candidate_indices = [
+        CATALOG_PATH,
+        BASE_DIR / "data" / "shows_index.json",
+        EXPERIMENT_API_DIR / "data" / "shows_index.json"
+    ]
+    for c in candidate_indices:
+        if c.exists():
+            try:
+                with open(c, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        return data
+            except Exception as e:
+                logger.error(f"Error loading catalog from {c}: {e}")
     return []
 
-def get_uploaded_episode_indices(show_id: str) -> Set[int]:
+def update_shows_index(show_id: str, show_obj: Dict[str, Any]):
+    """Updates the shows_index.json file with the latest episode count and status."""
+    index_paths = [
+        BASE_DIR / "data" / "shows_index.json",
+        EXPERIMENT_API_DIR / "data" / "shows_index.json"
+    ]
+    catalog = load_all_catalog_shows()
+    if not catalog:
+        return
+
+    ep_count = len([e for e in show_obj.get("episodes", []) if e.get("status") == "uploaded" or e.get("telegramUrl")])
+    total_eps = int(show_obj.get("totalEpisodes", 0) or 0)
+
+    updated = False
+    for item in catalog:
+        if str(item.get("showId")) == str(show_id):
+            item["uploadedEpisodes"] = ep_count
+            item["lastUpdated"] = show_obj.get("lastUpdated", time.strftime("%Y-%m-%d %H:%M:%S"))
+            item["channelId"] = show_obj.get("channelId", "")
+            if total_eps > 0 and ep_count >= total_eps:
+                item["status"] = "completed"
+            elif ep_count > 0:
+                item["status"] = "in_progress"
+            updated = True
+            break
+
+    if updated:
+        for p in index_paths:
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                with open(p, "w", encoding="utf-8") as fp:
+                    json.dump(catalog, fp, indent=2, ensure_ascii=False)
+            except Exception as e:
+                logger.debug(f"Could not write shows_index to {p}: {e}")
+
+def fetch_remote_github_show_json(show_id: str) -> Optional[Dict[str, Any]]:
     """
-    Checks JSON file on disk for this show.
-    Returns a set of episode indices that are already uploaded to Telegram
-    (having telegramMessageId, telegramUrl, or status == 'uploaded').
-    This guarantees ZERO duplicate downloads and seamless resume!
+    Fetches show JSON directly from GitHub repository (master branch).
+    Guarantees state is preserved even if the bot is restarted on a fresh machine/Colab!
     """
-    uploaded: Set[int] = set()
+    urls = [
+        f"https://raw.githubusercontent.com/{STORYTV_GITHUB_REPO}/{STORYTV_GITHUB_BRANCH}/data/shows/{show_id}.json",
+        f"https://raw.githubusercontent.com/{STORYTV_GITHUB_REPO}/master/data/shows/{show_id}.json",
+        f"https://raw.githubusercontent.com/{STORYTV_GITHUB_REPO}/main/data/shows/{show_id}.json"
+    ]
+    headers = {"User-Agent": "Mozilla/5.0"}
+    token = GITHUB_TOKEN or os.environ.get("GH_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"token {token}"
+
+    for u in urls:
+        try:
+            req = urllib.request.Request(u, headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if isinstance(data, dict) and data.get("episodes"):
+                        logger.info(f"📥 Restored {len(data['episodes'])} existing episodes for show {show_id} from GitHub!")
+                        return data
+        except Exception:
+            continue
+    return None
+
+def load_show_json_data(show_id: str) -> Dict[str, Any]:
+    """
+    Loads full existing show JSON dict.
+    Checks local files first; if missing, restores from GitHub automatically!
+    """
     candidate_paths = [
         DATA_SHOWS_DIR / f"{show_id}.json",
         EXTRACTED_SHOWS_DIR / f"{show_id}.json",
@@ -173,31 +352,37 @@ def get_uploaded_episode_indices(show_id: str) -> Set[int]:
             try:
                 with open(p, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    for ep in data.get("episodes", []):
-                        if ep.get("status") == "uploaded" or ep.get("telegramMessageId") or ep.get("telegramUrl"):
-                            if "index" in ep:
-                                uploaded.add(int(ep["index"]))
-            except Exception as e:
-                logger.warning(f"Error reading existing show JSON {p}: {e}")
-    return uploaded
-
-def load_show_json_data(show_id: str) -> Dict[str, Any]:
-    """Loads full existing show JSON dict or returns fresh structure."""
-    candidate_paths = [
-        DATA_SHOWS_DIR / f"{show_id}.json",
-        EXTRACTED_SHOWS_DIR / f"{show_id}.json",
-    ]
-    if EXPERIMENT_API_DIR.exists():
-        candidate_paths.append(EXPERIMENT_SHOWS_DIR / f"{show_id}.json")
-
-    for p in candidate_paths:
-        if p.exists():
-            try:
-                with open(p, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    if isinstance(data, dict) and data.get("episodes"):
+                        return data
             except Exception:
                 pass
+
+    # Fallback to Remote GitHub repository
+    remote_data = fetch_remote_github_show_json(show_id)
+    if remote_data:
+        # Cache locally so disk has it immediately
+        save_show_json_data(show_id, remote_data)
+        return remote_data
+
     return {"showId": str(show_id), "episodes": []}
+
+def get_uploaded_episode_indices(show_id: str) -> Set[int]:
+    """
+    Checks JSON file on disk or GitHub for this show.
+    Returns a set of episode indices that are already uploaded to Telegram
+    (having telegramMessageId, telegramUrl, or status == 'uploaded').
+    This guarantees ZERO duplicate downloads and seamless resume!
+    """
+    uploaded: Set[int] = set()
+    show_obj = load_show_json_data(show_id)
+    for ep in show_obj.get("episodes", []):
+        if ep.get("status") == "uploaded" or ep.get("telegramMessageId") or ep.get("telegramUrl") or ep.get("fileId"):
+            if "index" in ep:
+                try:
+                    uploaded.add(int(ep["index"]))
+                except (ValueError, TypeError):
+                    pass
+    return uploaded
 
 def save_show_json_data(show_id: str, show_obj: Dict[str, Any]):
     """
@@ -269,20 +454,19 @@ async def download_video_stream_with_progress(
     status_message: Optional[Message],
     show_title: str,
     ep_idx: int,
-    total_eps: int,
+    total_eps: Any,
     target_channel_id: int
 ) -> bool:
     """
     Downloads HLS stream in 1080p Full HD using yt-dlp with 16 parallel fragment threads.
-    Streams real-time download progress (percentage, speed, ETA, total size) directly
-    to the Telegram editable status card.
+    Streams real-time download progress directly to the Telegram editable status card.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "yt-dlp",
         "--newline",
         "--no-warnings",
-        "--concurrent-fragments", "16",  # 16x parallel accelerators for maximum speed
+        "--concurrent-fragments", "16",  # 16x parallel accelerators
         "-f", "bestvideo[height<=1080]+bestaudio[abr>=128]/bestvideo+bestaudio/best",
         "--merge-output-format", "mp4",
         "-o", str(output_path),
@@ -346,7 +530,7 @@ async def download_video_stream_with_progress(
         return False
 
 # =========================================================================
-# TELEGRAM COMMAND HANDLERS: /storytv & /stopstorytv
+# TELEGRAM COMMAND HANDLERS: /storytv, /stopstorytv, /recoverstorytv
 # =========================================================================
 
 async def stop_storytv_cmd(client: Client, message: Message):
@@ -355,9 +539,116 @@ async def stop_storytv_cmd(client: Client, message: Message):
     _STOP_REQUESTED = True
     await message.reply_text(
         "🛑 <b>StoryTV Batch Process Stop Requested!</b>\n\n"
-        "The current upload will finish safely and the loop will pause.\n"
-        "All progress is saved in JSON files. Run <code>/storytv</code> anytime to resume without duplicates!"
+        "The current upload will finish safely and all progress is auto-saved and synced to GitHub.\n"
+        "Run <code>/storytv</code> anytime to resume without duplicates!"
     )
+
+async def recover_storytv_cmd(client: Client, message: Message):
+    """
+    Recover all uploaded episodes from Telegram Channel into the JSON API:
+    Syntax: /recoverstorytv <channel_id> [show_id]
+    Example: /recoverstorytv -1002233445566 2935
+    """
+    args = message.text.split()
+    if len(args) < 2:
+        await message.reply_text(
+            "📖 <b>Telegram Channel Recovery Tool</b>\n\n"
+            "This command scans your Telegram channel, recovers all previously uploaded episodes, "
+            "rebuilds the show JSON, and pushes it directly to the <b>storytv-api</b> on GitHub!\n\n"
+            "<b>Usage:</b>\n"
+            "<code>/recoverstorytv &lt;channel_id&gt; [show_id]</code>\n\n"
+            "<b>Example:</b>\n"
+            "<code>/recoverstorytv -1002233445566 2935</code>"
+        )
+        return
+
+    channel_id_str = args[1].strip()
+    target_show_id = args[2].strip() if len(args) > 2 else "2935"
+
+    try:
+        channel_id = int(channel_id_str)
+    except ValueError:
+        await message.reply_text("❌ Invalid channel ID. Must be integer e.g. -1002233445566")
+        return
+
+    status_msg = await message.reply_text(
+        f"🔍 <b>Scanning Channel <code>{channel_id}</code> for Show {target_show_id}...</b>\n\n"
+        f"<i>Reading message history and recovering video file IDs...</i>"
+    )
+
+    clean_ch_id = str(channel_id).replace("-100", "")
+
+    # Load existing show data or fresh structure
+    show_obj = load_show_json_data(target_show_id)
+    episodes_map = {int(ep["index"]): ep for ep in show_obj.get("episodes", []) if "index" in ep}
+
+    recovered_count = 0
+
+    try:
+        # Scan messages from channel in batches of 100
+        # Since Telegram Bot API allows getting messages by ID:
+        # We search from message 1 up to 1000
+        batch_ids = []
+        for mid in range(1, 1001):
+            batch_ids.append(mid)
+            if len(batch_ids) >= 100 or mid == 1000:
+                try:
+                    msgs = await client.get_messages(chat_id=channel_id, message_ids=batch_ids)
+                    for m in msgs:
+                        if not m or not m.video or not m.caption:
+                            continue
+                        # Match Show ID and Episode index from caption
+                        # Caption format:
+                        # 🎬 Show Title — Episode 12
+                        # 🆔 Show ID: 2935 • Episode: 12/650
+                        m_show = re.search(r"Show ID:\s*<code>?(\d+)</code>?", m.caption, re.IGNORECASE)
+                        m_ep = re.search(r"Episode\s*(\d+)", m.caption, re.IGNORECASE)
+                        if not m_ep:
+                            m_ep = re.search(r"Episode:\s*(\d+)", m.caption, re.IGNORECASE)
+
+                        found_show_id = m_show.group(1) if m_show else target_show_id
+                        if found_show_id == target_show_id and m_ep:
+                            ep_num = int(m_ep.group(1))
+                            tg_url = f"https://t.me/c/{clean_ch_id}/{m.id}"
+
+                            if ep_num not in episodes_map or not episodes_map[ep_num].get("telegramUrl"):
+                                episodes_map[ep_num] = {
+                                    "index": ep_num,
+                                    "contentId": str(ep_num),
+                                    "title": f"Episode {ep_num}",
+                                    "label": f"{ep_num}",
+                                    "telegramMessageId": m.id,
+                                    "telegramUrl": tg_url,
+                                    "fileId": m.video.file_id,
+                                    "status": "uploaded",
+                                    "recovered": True,
+                                    "uploadedAt": time.strftime("%Y-%m-%d %H:%M:%S")
+                                }
+                                recovered_count += 1
+                except Exception as b_err:
+                    logger.debug(f"Batch scan notice: {b_err}")
+                batch_ids = []
+
+        show_obj["showId"] = target_show_id
+        show_obj["channelId"] = str(channel_id)
+        show_obj["lastUpdated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        show_obj["episodes"] = [episodes_map[k] for k in sorted(episodes_map.keys())]
+
+        # Save and Push to GitHub!
+        pushed = sync_show_to_github(target_show_id, show_obj.get("showTitle", f"Show {target_show_id}"), show_obj)
+
+        await status_msg.edit_text(
+            f"🎉 <b>Channel Recovery Completed!</b>\n\n"
+            f"🎬 <b>Show ID:</b> <code>{target_show_id}</code>\n"
+            f"📥 <b>Recovered Episodes:</b> <b>{recovered_count}</b> new (Total: {len(episodes_map)})\n"
+            f"📢 <b>Channel:</b> <code>{channel_id}</code>\n"
+            f"🌐 <b>GitHub API Status:</b> {'✅ Synced to GitHub repository' if pushed else '💾 Saved locally in data/shows/'}\n\n"
+            f"<i>Now re-running <code>/storytv</code> will automatically pick up from episode {len(episodes_map) + 1}!</i>"
+        )
+
+    except Exception as rec_err:
+        logger.exception("Channel recovery failed")
+        await status_msg.edit_text(f"❌ Recovery error: <code>{str(rec_err)}</code>")
 
 async def storytv_cmd(client: Client, message: Message):
     """
@@ -365,9 +656,10 @@ async def storytv_cmd(client: Client, message: Message):
     - User gives /storytv (optionally with Channel ID, or prompted ONCE for Channel ID).
     - Automatically processes all 1,215 shows sequentially in 1080p Full HD.
     - Shows LIVE real-time percentage progress for both downloading and uploading!
-    - Smart Deduplication: Checks {showId}.json on disk.
-      - If an episode already has a telegramMessageId or telegramUrl, it is SKIPPED instantly!
-      - If pending, it downloads at maximum speed (16x parallel fragments) and uploads to the Channel.
+    - Smart Deduplication: Checks local disk AND remote GitHub repository.
+      - If an episode already has telegramUrl/telegramMessageId, it is SKIPPED instantly!
+      - If pending, it downloads at maximum speed (16x parallel fragments) and uploads to Channel.
+    - Periodic GitHub Auto-Sync: Commits and pushes to GitHub every 5 episodes and on show completion!
     - If the bot stops or crashes, re-running /storytv resumes seamlessly with NO duplicates!
     """
     global _STOP_REQUESTED
@@ -457,7 +749,7 @@ async def storytv_cmd(client: Client, message: Message):
             f"🌟 <b>Quality:</b> 1080p Full HD (Crisp, High Bitrate + 128k AAC)\n"
             f"⚡ <b>Speed Boost:</b> 16x Parallel Fragment Threads Enabled\n"
             f"📢 <b>Target Channel ID:</b> <code>{target_channel_id}</code>\n"
-            f"🛡️ <b>Smart JSON Deduplication:</b> Enabled\n"
+            f"🛡️ <b>Smart GitHub Auto-Sync:</b> Active (Pushing progress every 5 eps)\n"
             f"🛑 <i>Send /stopstorytv anytime to pause safely.</i>"
         )
 
@@ -477,7 +769,7 @@ async def storytv_cmd(client: Client, message: Message):
             genre = show_item.get("genre", "Short Drama")
             catalog_total_eps = int(show_item.get("totalEpisodes", 0) or 0)
 
-            # 1. Check existing JSON for this show on disk
+            # 1. Load existing show data (from disk or GitHub!)
             existing_uploaded = get_uploaded_episode_indices(show_id)
             show_obj = load_show_json_data(show_id)
             show_obj["showId"] = show_id
@@ -646,6 +938,10 @@ async def storytv_cmd(client: Client, message: Message):
                         show_obj["episodes"] = [episodes_map[k] for k in sorted(episodes_map.keys())]
                         save_show_json_data(show_id, show_obj)
 
+                        # Progressive Auto-Sync to GitHub every 5 episodes!
+                        if ep_idx % 5 == 0:
+                            sync_show_to_github(show_id, show_title, show_obj)
+
                     except Exception as up_err:
                         logger.error(f"Error uploading ep {ep_idx} of show {show_id}: {up_err}")
                     finally:
@@ -669,6 +965,9 @@ async def storytv_cmd(client: Client, message: Message):
                 if catalog_total_eps > 0 and len(existing_uploaded) >= catalog_total_eps:
                     break
 
+            # End of show: Guarantee full sync and push to GitHub
+            sync_show_to_github(show_id, show_title, show_obj)
+
         # =========================================================================
         # BATCH COMPLETION SUMMARY
         # =========================================================================
@@ -679,7 +978,7 @@ async def storytv_cmd(client: Client, message: Message):
             f"✅ <b>New Episodes Uploaded:</b> {global_uploaded}\n"
             f"⏭️ <b>Episodes Skipped (Already Uploaded):</b> {global_skipped}\n"
             f"📢 <b>Destination Channel:</b> <code>{target_channel_id}</code>\n"
-            f"💾 <b>Local JSON Status:</b> All progress saved in data/shows/\n"
+            f"🌐 <b>GitHub API Status:</b> Auto-synced and pushed to storytv-api\n"
             f"🍿 <b>Zero Duplicate Guarantee:</b> Resumable anytime with /storytv"
         )
         await editable.edit_text(final_summary)

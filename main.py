@@ -5236,9 +5236,10 @@ def register_all_handlers(client: Client):
     add_handler_to_client(client, MessageHandler(youtube_extract_cmd, filters.command(["youtube", "ytextract"]) & filters.private & auth_filter))
     add_handler_to_client(client, MessageHandler(khan_extract_cmd, filters.command(["khan", "khansir"]) & filters.private & auth_filter))
     try:
-        from storytv_handler import storytv_cmd, stop_storytv_cmd
+        from storytv_handler import storytv_cmd, stop_storytv_cmd, recover_storytv_cmd
         add_handler_to_client(client, MessageHandler(storytv_cmd, filters.command(["storytv", "story"]) & filters.private & auth_filter))
         add_handler_to_client(client, MessageHandler(stop_storytv_cmd, filters.command(["stopstorytv", "stopstory"]) & filters.private & auth_filter))
+        add_handler_to_client(client, MessageHandler(recover_storytv_cmd, filters.command(["recoverstorytv", "syncstorytv"]) & filters.private & auth_filter))
     except Exception as _st_err:
         logging.warning(f"Failed to load storytv_cmd: {_st_err}")
 
