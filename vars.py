@@ -210,42 +210,98 @@ GITHUB_REPO = os.environ.get("GITHUB_REPO", "ramjipatel-tech/course-wallah-platf
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip().strip("'\"")
 
 # ==============================================================================
-# 🔧 TOOLS & BINARIES
+# 🔧 TOOLS & BINARIES (FFmpeg & Heroku Shared Library Auto-Resolver)
 # ==============================================================================
+
+def _configure_linux_library_paths():
+    """
+    Configures LD_LIBRARY_PATH and PATH on Linux / Heroku environments.
+    Fixes Ubuntu shared library errors like:
+    'error while loading shared libraries: libpulsecommon-16.1.so'
+    """
+    import sys
+    if sys.platform != "win32":
+        apt_lib_dirs = [
+            "/app/.apt/usr/lib/x86_64-linux-gnu/pulseaudio",
+            "/app/.apt/usr/lib/x86_64-linux-gnu",
+            "/app/.apt/usr/lib",
+            "/app/.apt/lib/x86_64-linux-gnu",
+            "/app/.apt/lib",
+            "/usr/lib/x86_64-linux-gnu/pulseaudio",
+            "/usr/lib/x86_64-linux-gnu",
+            "/usr/lib"
+        ]
+        cur_ld = os.environ.get("LD_LIBRARY_PATH", "")
+        valid_dirs = [d for d in apt_lib_dirs if os.path.isdir(d)]
+        if valid_dirs:
+            os.environ["LD_LIBRARY_PATH"] = ":".join(valid_dirs) + (f":{cur_ld}" if cur_ld else "")
+
+        # Also ensure static /app/vendor/ffmpeg/bin and /app/.apt/usr/bin are in PATH
+        bin_dirs = [
+            "/app/vendor/ffmpeg/bin",
+            "/app/.apt/usr/bin",
+            "/app/.apt/bin"
+        ]
+        cur_path = os.environ.get("PATH", "")
+        valid_bins = [b for b in bin_dirs if os.path.isdir(b)]
+        if valid_bins:
+            os.environ["PATH"] = ":".join(valid_bins) + (f":{cur_path}" if cur_path else "")
+
+_configure_linux_library_paths()
+
+
+def _can_run(binary_path: str) -> bool:
+    """Verifies that a binary runs and does not fail with library/missing .so errors."""
+    import subprocess
+    try:
+        r = subprocess.run([binary_path, "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 def _find_binary(name: str, env_var: str) -> str:
     """
-    Finds a system binary (ffmpeg / ffprobe) in order:
+    Finds a working system binary (ffmpeg / ffprobe) in order:
     1. Explicit env var (FFMPEG_PATH / FFPROBE_PATH)
-    2. Heroku buildpack path  (/app/vendor/ffmpeg/bin/<name>)
-    3. /usr/bin, /usr/local/bin  (Docker / standard Linux)
-    4. Falls back to plain binary name (relies on PATH)
+    2. Heroku static vendor buildpack (/app/vendor/ffmpeg/bin/<name>)
+    3. Standard system paths (/usr/bin, /usr/local/bin)
+    4. PATH lookup
+    5. Heroku Aptfile path (/app/.apt/usr/bin/<name>)
+    6. Falls back to best candidate
     """
     import shutil as _shutil
+
     # 1. Explicit env override
     explicit = os.environ.get(env_var, "").strip().strip("'\"")
-    if explicit and os.path.isfile(explicit):
+    if explicit and os.path.isfile(explicit) and _can_run(explicit):
         return explicit
 
-    # 2. Heroku buildpack locations (Aptfile & vendor ffmpeg)
-    for heroku_candidate in [
-        f"/app/.apt/usr/bin/{name}",
-        f"/app/.apt/usr/local/bin/{name}",
-        f"/app/vendor/ffmpeg/bin/{name}"
-    ]:
-        if os.path.isfile(heroku_candidate):
-            return heroku_candidate
+    # 2. Heroku static vendor buildpack (preferred — zero shared library dependencies)
+    vendor_candidate = f"/app/vendor/ffmpeg/bin/{name}"
+    if os.path.isfile(vendor_candidate) and _can_run(vendor_candidate):
+        return vendor_candidate
 
     # 3. Common system paths
-    for candidate in [f"/usr/local/bin/{name}", f"/usr/bin/{name}", f"/bin/{name}"]:
-        if os.path.isfile(candidate):
+    for candidate in [f"/usr/bin/{name}", f"/usr/local/bin/{name}", f"/bin/{name}"]:
+        if os.path.isfile(candidate) and _can_run(candidate):
             return candidate
 
     # 4. PATH lookup
     found = _shutil.which(name)
-    if found:
+    if found and _can_run(found):
         return found
 
-    # 5. Last resort — just the name; subprocess will raise if missing
+    # 5. Heroku apt locations (with libpulsecommon LD_LIBRARY_PATH configured)
+    for apt_candidate in [f"/app/.apt/usr/bin/{name}", f"/app/.apt/usr/local/bin/{name}"]:
+        if os.path.isfile(apt_candidate) and _can_run(apt_candidate):
+            return apt_candidate
+
+    # 6. Fallback candidates
+    for fallback in [vendor_candidate, f"/app/.apt/usr/bin/{name}", f"/usr/bin/{name}"]:
+        if os.path.isfile(fallback):
+            return fallback
+
     return name
 
 FFMPEG_PATH  = _find_binary("ffmpeg",  "FFMPEG_PATH")
