@@ -5302,6 +5302,16 @@ def register_all_handlers(client: Client):
     except Exception as _bp_err:
         logging.warning(f"Failed to register bypass_cmd: {_bp_err}")
 
+    # 4uMovies Network Multi-Platform Commands (/netmirror, /mastii, /anime)
+    try:
+        from fourmovies_handler import netmirror_cmd, mastii_cmd, anime_cmd, fourmovies_callback_handler
+        add_handler_to_client(client, MessageHandler(netmirror_cmd, filters.command(["netmirror", "net", "netstream"]) & filters.private & auth_filter))
+        add_handler_to_client(client, MessageHandler(mastii_cmd, filters.command(["mastii", "masti"]) & filters.private & auth_filter))
+        add_handler_to_client(client, MessageHandler(anime_cmd, filters.command(["anime", "animekai"]) & filters.private & auth_filter))
+        add_handler_to_client(client, CallbackQueryHandler(fourmovies_callback_handler, filters.regex(r"^(net_res_|masti_res_|anime_res_)")))
+    except Exception as _fm_err:
+        logging.warning(f"Failed to register fourmovies handlers: {_fm_err}")
+
 
     # Admin Commands
     add_handler_to_client(client, MessageHandler(admin_panel_cmd, filters.command("admin") & filters.private & admin_filter))

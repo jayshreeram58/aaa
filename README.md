@@ -213,6 +213,12 @@ python main.py
 | `/plan` | View your subscription details and expiry date |
 | `/t2t` | Convert raw text into a downloadable `.txt` file |
 | `/t2h` | Convert course TXT links into an offline HTML Web Player |
+| `/net` / `/netmirror` | Search & resolve direct 1080p HLS stream URLs from NetMirror |
+| `/masti` / `/mastii` | Search & stream AES-decrypted master HLS from Mastii OTT Pro |
+| `/anime` | Search & resolve multi-server AnimeKai HLS streams (Sub & Dub) |
+| `/bypass` | Automated shortlink & cloud protector bypass engine |
+| `/storytv` | Automated StoryTV crawler & multi-cloud episode sync |
+| `/recoverstorytv` | Re-sync StoryTV shows catalog from Telegram channel backup |
 | `/id` | Show your Telegram User ID and current Chat ID |
 | `/help` | Display interactive help manual |
 
