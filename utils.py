@@ -310,7 +310,7 @@ def is_appx_url(url: str) -> bool:
     return any(k in lower for k in (
         "fetch_video", "/fetch_video", "get_video", "/get_video",
         "classx.co.in", "appx.co.in", "classplusapp.com", "testpress.in",
-        "akamai.net.in", "penpencil"
+        "akamai.net.in", "penpencil", "boosteracademy.in"
     ))
 
 

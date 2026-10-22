@@ -20,9 +20,6 @@
       "url": "heroku-community/apt"
     },
     {
-      "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git"
-    },
-    {
       "url": "heroku/python"
     }
   ],
@@ -48,12 +45,12 @@
       "required": true
     },
     "GITHUB_TOKEN": {
-      "description": "GitHub Personal Access Token (classic with 'repo' scope) to automatically push extracted batches, SonyLIV shows, and course catalogs directly to GitHub",
+      "description": "GitHub Personal Access Token (classic with 'repo' scope) to automatically push extracted batches to GitHub",
       "value": "",
       "required": false
     },
     "GITHUB_REPO": {
-      "description": "Target GitHub repository to receive extracted data (e.g. ramjipatel-tech/course-wallah-platform)",
+      "description": "Target GitHub repository (e.g. ramjipatel-tech/course-wallah-platform)",
       "value": "ramjipatel-tech/course-wallah-platform",
       "required": false
     },

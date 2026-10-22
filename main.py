@@ -101,6 +101,7 @@ from vars import (
     LIVE_TOPIC_ID,
     PREMIUM_CHANNEL,
     FFMPEG_PATH,
+    FFPROBE_PATH,
     PW_TOKEN,
     COOKIES_FILE,
     THUMBNAILS,
@@ -2150,8 +2151,8 @@ async def execute_job_pipeline(job: JobCheckpoint, bot_client: Client, manager):
             active_wm = watermark if watermark not in ("/d", "no", "none", "") else None
             custom_headers = {
                 "User-Agent": "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
-                "Referer": "https://player.akamai.net.in/",
-                "Origin": "https://akstechnicalclasses.classx.co.in",
+                "Referer": "https://app.boosteracademy.in/",
+                "Origin": "https://boosteracademyapi.classx.co.in",
                 "Accept": "*/*",
                 "Connection": "keep-alive"
             }
@@ -5653,7 +5654,7 @@ async def start_all_bots(configs: Optional[List[Dict[str, Any]]] = None):
 
     ffprobe_ok = False
     try:
-        r_fp = subprocess.run(["ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        r_fp = subprocess.run([FFPROBE_PATH or "ffprobe", "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         ffprobe_ok = (r_fp.returncode == 0)
     except Exception:
         ffprobe_ok = False

@@ -205,8 +205,40 @@ GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip().strip("'\"")
 # ==============================================================================
 # 🔧 TOOLS & BINARIES
 # ==============================================================================
-FFMPEG_PATH = os.environ.get("FFMPEG_PATH", "ffmpeg")
-FFPROBE_PATH = os.environ.get("FFPROBE_PATH", "ffprobe")
+def _find_binary(name: str, env_var: str) -> str:
+    """
+    Finds a system binary (ffmpeg / ffprobe) in order:
+    1. Explicit env var (FFMPEG_PATH / FFPROBE_PATH)
+    2. Heroku buildpack path  (/app/vendor/ffmpeg/bin/<name>)
+    3. /usr/bin, /usr/local/bin  (Docker / standard Linux)
+    4. Falls back to plain binary name (relies on PATH)
+    """
+    import shutil as _shutil
+    # 1. Explicit env override
+    explicit = os.environ.get(env_var, "").strip().strip("'\"")
+    if explicit and os.path.isfile(explicit):
+        return explicit
+
+    # 2. Heroku buildpack location
+    heroku_path = f"/app/vendor/ffmpeg/bin/{name}"
+    if os.path.isfile(heroku_path):
+        return heroku_path
+
+    # 3. Common system paths
+    for candidate in [f"/usr/local/bin/{name}", f"/usr/bin/{name}"]:
+        if os.path.isfile(candidate):
+            return candidate
+
+    # 4. PATH lookup
+    found = _shutil.which(name)
+    if found:
+        return found
+
+    # 5. Last resort — just the name; subprocess will raise if missing
+    return name
+
+FFMPEG_PATH  = _find_binary("ffmpeg",  "FFMPEG_PATH")
+FFPROBE_PATH = _find_binary("ffprobe", "FFPROBE_PATH")
 PW_TOKEN = os.environ.get("PW_TOKEN", "")
 
 # ==============================================================================

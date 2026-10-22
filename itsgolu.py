@@ -430,8 +430,8 @@ def download_appx_m3u8(url: str, name: str, custom_headers: str = None, custom_d
     elif any(k in clean_url.lower() for k in ("akamai.net.in", "classx.co.in", "appx.co.in", "classplusapp.com")):
         headers = (
             "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36\r\n"
-            "Referer: https://player.akamai.net.in/\r\n"
-            "Origin: https://akstechnicalclasses.classx.co.in\r\n"
+            "Referer: https://app.boosteracademy.in/\r\n"
+            "Origin: https://boosteracademyapi.classx.co.in\r\n"
             "Accept: */*\r\n"
             "Connection: keep-alive\r\n"
         )
@@ -663,7 +663,7 @@ _FASTEST_ENCODER_FLAGS: List[str] = ["-c:v", "libx264", "-preset", "ultrafast", 
 _HW_BENCHMARK_DONE: bool = True
 
 
-def probe_media_properties(file_path: Union[str, Path], ffprobe_bin: str = "ffprobe") -> Dict[str, Any]:
+def probe_media_properties(file_path: Union[str, Path], ffprobe_bin: str = None) -> Dict[str, Any]:
     """
     Extracts precise video & audio properties using ffprobe.
     Returns dictionary with: duration, width, height, fps, video_codec, video_bitrate, has_audio, audio_codec, audio_duration, audio_bitrate, total_bitrate, size_bytes, valid.
@@ -795,7 +795,7 @@ def get_or_create_watermark_image(text: str = "Course Wallah", base_dir: Optiona
     return None
 
 
-def benchmark_and_get_fastest_encoder(ffmpeg_bin: str = "ffmpeg") -> Tuple[str, List[str]]:
+def benchmark_and_get_fastest_encoder(ffmpeg_bin: str = None) -> Tuple[str, List[str]]:
     """
     Returns baseline production H.264 video encoder (libx264 ultrafast).
     Avoids expensive startup benchmark to ensure instant initialization.
@@ -1112,7 +1112,7 @@ def extract_or_download_thumbnail(video_path: str, api_thumbnail_url: str = None
         gen_thumb = os.path.join(TEMP_DIR, f"gen_{base_id}.jpg")
         try:
             subprocess.run(
-                ["ffmpeg", "-y", "-ss", "00:00:05", "-i", str(video_path), "-vframes", "1", "-q:v", "2", str(gen_thumb)],
+                [FFMPEG_PATH or "ffmpeg", "-y", "-ss", "00:00:05", "-i", str(video_path), "-vframes", "1", "-q:v", "2", str(gen_thumb)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False
@@ -1121,7 +1121,7 @@ def extract_or_download_thumbnail(video_path: str, api_thumbnail_url: str = None
                 return gen_thumb
             # Try earlier timestamp for short videos
             subprocess.run(
-                ["ffmpeg", "-y", "-ss", "00:00:01", "-i", str(video_path), "-vframes", "1", "-q:v", "2", str(gen_thumb)],
+                [FFMPEG_PATH or "ffmpeg", "-y", "-ss", "00:00:01", "-i", str(video_path), "-vframes", "1", "-q:v", "2", str(gen_thumb)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False
@@ -1190,7 +1190,7 @@ def build_video_caption(
 def get_duration(filename):
     result = subprocess.run(
         [
-            "ffprobe", "-v", "error", "-show_entries",
+            FFPROBE_PATH or "ffprobe", "-v", "error", "-show_entries",
             "format=duration", "-of",
             "default=noprint_wrappers=1:nokey=1", filename
         ],
@@ -1206,7 +1206,7 @@ def duration(filename: str) -> float:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error", "-show_entries",
+                FFPROBE_PATH or "ffprobe", "-v", "error", "-show_entries",
                 "format=duration", "-of",
                 "default=noprint_wrappers=1:nokey=1", str(filename)
             ],
@@ -1231,7 +1231,7 @@ def get_video_duration(filename: str) -> float:
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error", "-show_entries",
+                FFPROBE_PATH or "ffprobe", "-v", "error", "-show_entries",
                 "format=duration", "-of",
                 "default=noprint_wrappers=1:nokey=1", str(filename)
             ],
@@ -1803,8 +1803,8 @@ async def download_pdf(
     elif any(k in clean_url.lower() for k in ("akamai.net.in", "classx.co.in", "appx.co.in", "classplusapp.com")):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Referer": "https://player.akamai.net.in/",
-            "Origin": "https://akstechnicalclasses.classx.co.in",
+            "Referer": "https://app.boosteracademy.in/",
+            "Origin": "https://boosteracademyapi.classx.co.in",
             "Accept": "application/pdf,application/octet-stream,*/*",
             "Connection": "keep-alive"
         }
@@ -2075,8 +2075,8 @@ def pdf_download_sync(
     elif any(k in clean_url.lower() for k in ("akamai.net.in", "classx.co.in", "appx.co.in", "classplusapp.com")):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Referer": "https://player.akamai.net.in/",
-            "Origin": "https://akstechnicalclasses.classx.co.in",
+            "Referer": "https://app.boosteracademy.in/",
+            "Origin": "https://boosteracademyapi.classx.co.in",
             "Accept": "application/pdf,application/octet-stream,*/*",
             "Connection": "keep-alive"
         }
@@ -2209,8 +2209,8 @@ def download_raw_file(url: str, filename: str, user_id: int = None, custom_dir: 
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (Linux; Android 13)",
-        "Referer": "https://akstechnicalclasses.classx.co.in/",
-        "Origin": "https://akstechnicalclasses.classx.co.in",
+        "Referer": "https://app.boosteracademy.in/",
+        "Origin": "https://boosteracademyapi.classx.co.in",
         "Accept": "*/*",
         "Connection": "keep-alive"
     }
@@ -2316,7 +2316,7 @@ def decrypt_and_merge_video(mpd_url, keys_string, output_path, output_name, qual
 
         # Step 3: Lossless remuxing of decrypted video + audio using FFmpeg
         cmd4 = [
-            "ffmpeg", "-y",
+            FFMPEG_PATH or "ffmpeg", "-y",
             "-i", str(output_path / "video.mp4"),
             "-i", str(output_path / "audio.m4a"),
             "-c", "copy",
@@ -2419,7 +2419,7 @@ async def fast_download(url, name):
 
                     else:
                         cmd = [
-                            "ffmpeg",
+                            FFMPEG_PATH or "ffmpeg",
                             "-hide_banner",
                             "-loglevel", "error",
                             "-stats",
@@ -2693,7 +2693,7 @@ def is_playable(file_path: str) -> bool:
         return False
     try:
         subprocess.run(
-            ["ffprobe", "-v", "error", "-i", str(file_path)],
+            [FFPROBE_PATH or "ffprobe", "-v", "error", "-i", str(file_path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True
@@ -2710,7 +2710,7 @@ def repair_video(file_path: str) -> str:
     repaired_path = file_path.replace(".mkv", "_fixed.mp4")
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-i", str(file_path), "-c", "copy", str(repaired_path)],
+            [FFMPEG_PATH or "ffmpeg", "-y", "-i", str(file_path), "-c", "copy", str(repaired_path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True
@@ -2899,7 +2899,7 @@ async def send_vid(
             temp_thumb = os.path.join(TEMP_DIR, f"thumb_{os.path.basename(filename)}.jpg")
             try:
                 subprocess.run(
-                    ["ffmpeg", "-y", "-ss", "00:00:10", "-i", str(filename), "-vframes", "1", "-q:v", "2", str(temp_thumb)],
+                    [FFMPEG_PATH or "ffmpeg", "-y", "-ss", "00:00:10", "-i", str(filename), "-vframes", "1", "-q:v", "2", str(temp_thumb)],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     check=False
