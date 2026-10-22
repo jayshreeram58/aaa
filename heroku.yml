@@ -1,5 +1,7 @@
 build:
   docker:
+    web: Dockerfile
     worker: Dockerfile
 run:
+  web: python run_heroku.py
   worker: python main.py
