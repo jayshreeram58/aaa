@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Set
 
 from pyrogram import Client, filters, enums
-from pyrogram.types import Message
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 from direct_sonyliv import DirectSonyLIV
 from vars import WATERMARK_TEXT, WATERMARK_FILE, CREDIT, TEMP_DIR, GITHUB_TOKEN, GITHUB_REPO, GITHUB_BRANCH
@@ -202,16 +202,45 @@ def load_sony_show_json(show_id: str) -> dict:
     }
 
 
+# =========================================================================
+# 📺 SONY TV POPULAR SHOW CATALOG
+# =========================================================================
+
+POPULAR_SONY_SHOWS = [
+    {"title": "Taarak Mehta Ka Ooltah Chashmah", "id": "1700000084", "icon": "🎭", "alias": ["tmkoc", "taarak", "mehta", "jethalal", "tarak"]},
+    {"title": "CID", "id": "1700000196", "icon": "🕵️", "alias": ["cid", "pradyuman", "daya", "abhijeet", "c.i.d."]},
+    {"title": "Crime Patrol Satark", "id": "1700000108", "icon": "🚔", "alias": ["crime patrol", "crime patrol satark", "satark", "crimepatrol"]},
+    {"title": "Crime Patrol Dial 100", "id": "1700000076", "icon": "🚨", "alias": ["dial 100", "dial100", "crime dial 100"]},
+    {"title": "The Kapil Sharma Show", "id": "1700000083", "icon": "🎤", "alias": ["kapil", "tkss", "kapil sharma", "the kapil sharma show"]},
+    {"title": "Scam 1992: Harshad Mehta", "id": "1700000292", "icon": "📈", "alias": ["scam", "1992", "harshad", "scam 1992"]},
+    {"title": "Adaalat (KD Pathak)", "id": "1700000091", "icon": "🧑‍⚖️", "alias": ["adaalat", "kd pathak", "court", "adalat"]},
+    {"title": "Aladdin - Naam Toh Suna Hoga", "id": "1700000001", "icon": "🧙", "alias": ["aladdin", "naam toh suna hoga", "aladin"]},
+    {"title": "Tenali Rama", "id": "1700000003", "icon": "⚔️", "alias": ["tenali", "rama", "tenalirama"]},
+    {"title": "Baalveer", "id": "1700000071", "icon": "🦸", "alias": ["baalveer", "balveer", "baal veer"]},
+    {"title": "Vighnaharta Ganesh", "id": "1700000078", "icon": "🐘", "alias": ["ganesh", "vighnaharta", "vighnaharta ganesh"]},
+    {"title": "Aahat", "id": "1700000144", "icon": "👻", "alias": ["aahat", "horror"]},
+    {"title": "Bharat Ka Veer Putra Maharana Pratap", "id": "1700000143", "icon": "👑", "alias": ["maharana pratap", "pratap", "maharana"]},
+    {"title": "Suryaputra Karn", "id": "1700000150", "icon": "🏹", "alias": ["karn", "suryaputra", "suryaputra karn"]},
+    {"title": "India's Best Dancer", "id": "1700000180", "icon": "💃", "alias": ["dancer", "ibd", "indias best dancer"]},
+    {"title": "Yeh Un Dinon Ki Baat Hai", "id": "1700000106", "icon": "💖", "alias": ["yudkbh", "yeh un dinon", "sameer naina"]},
+    {"title": "Mere Sai - Shraddha Aur Saburi", "id": "1700000107", "icon": "🙏", "alias": ["sai", "mere sai", "shirdi"]},
+    {"title": "Sankatmochan Mahabali Hanuman", "id": "1700000109", "icon": "🐒", "alias": ["hanuman", "sankatmochan"]},
+    {"title": "Beyhadh", "id": "1700000007", "icon": "💔", "alias": ["beyhadh", "maya", "jennifer"]},
+    {"title": "Patiala Babes", "id": "1700000060", "icon": "👭", "alias": ["patiala babes", "babes", "patiala"]}
+]
+
+
 def extract_sony_show_id(text: str) -> Optional[str]:
-    """Extracts SonyLIV show ID from raw number or URL."""
+    """Extracts SonyLIV show ID from raw number, URL, or popular show title/alias."""
     if not text:
         return None
     clean = text.strip()
-    # Check if direct ID
+
+    # 1. Direct numeric ID
     if clean.isdigit():
         return clean
 
-    # Check URL: https://www.sonyliv.com/shows/...-1700000084 or show=1700000084
+    # 2. Extract from SonyLIV URL (e.g. /shows/cid-1700000196 or ?show=1700000196)
     m = re.search(r"(\d{9,12})", clean)
     if m:
         return m.group(1)
@@ -220,7 +249,67 @@ def extract_sony_show_id(text: str) -> Optional[str]:
     if m2:
         return m2.group(1)
 
+    # 3. Match against popular shows catalog
+    clean_lower = clean.lower()
+    for show in POPULAR_SONY_SHOWS:
+        if clean_lower == show["title"].lower():
+            return show["id"]
+        for al in show.get("alias", []):
+            if al == clean_lower or clean_lower.startswith(al) or al in clean_lower:
+                return show["id"]
+
     return None
+
+
+def build_sony_catalog_panel() -> tuple[str, InlineKeyboardMarkup]:
+    """Builds a rich show list with IDs and interactive 1-click download buttons."""
+    header = (
+        "📺 <b>SONYLIV FULL SHOW DOWNLOADER & BACKUP</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🌟 <b>Top Popular Shows & Show IDs:</b>\n\n"
+    )
+
+    lines = []
+    for idx, s in enumerate(POPULAR_SONY_SHOWS, 1):
+        lines.append(f"{idx}. {s['icon']} <b>{s['title']}</b> ➔ <code>{s['id']}</code>")
+
+    footer = (
+        "\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        "<blockquote>👇 <b>Show ID bhejien</b> (jaise <code>1700000084</code> ya <code>1700000196</code>)\n"
+        "Ya show ka naam / URL likhein, ya neeche quick button dabayein.\n\n"
+        "⚡ Bot <b>pura show ek-ek karke</b> download karke aapke channel par upload karega aur <b>GitHub JSON</b> me backup bhi banayega!</blockquote>\n\n"
+        "<i>Send /cancel to abort.</i>"
+    )
+
+    text = header + "\n".join(lines) + footer
+
+    buttons = [
+        [
+            InlineKeyboardButton("🎭 TMKOC (1700000084)", callback_data="sony_pick:1700000084"),
+            InlineKeyboardButton("🕵️ CID (1700000196)", callback_data="sony_pick:1700000196")
+        ],
+        [
+            InlineKeyboardButton("🚔 Crime Patrol (1700000108)", callback_data="sony_pick:1700000108"),
+            InlineKeyboardButton("🎤 Kapil Sharma (1700000083)", callback_data="sony_pick:1700000083")
+        ],
+        [
+            InlineKeyboardButton("📈 Scam 1992 (1700000292)", callback_data="sony_pick:1700000292"),
+            InlineKeyboardButton("🧑‍⚖️ Adaalat (1700000091)", callback_data="sony_pick:1700000091")
+        ],
+        [
+            InlineKeyboardButton("⚔️ Tenali Rama (1700000003)", callback_data="sony_pick:1700000003"),
+            InlineKeyboardButton("🧙 Aladdin (1700000001)", callback_data="sony_pick:1700000001")
+        ],
+        [
+            InlineKeyboardButton("🦸 Baalveer (1700000071)", callback_data="sony_pick:1700000071"),
+            InlineKeyboardButton("👻 Aahat (1700000144)", callback_data="sony_pick:1700000144")
+        ],
+        [
+            InlineKeyboardButton("❌ Cancel", callback_data="sony_cancel")
+        ]
+    ]
+
+    return text, InlineKeyboardMarkup(buttons)
 
 
 # =========================================================================
@@ -397,14 +486,14 @@ async def recoversonyliv_cmd(client: Client, message: Message):
         await status_msg.edit_text(f"❌ Recovery failed: <code>{e}</code>", parse_mode=enums.ParseMode.HTML)
 
 
-async def sonyliv_cmd(client: Client, message: Message):
+async def sonyliv_cmd(client: Client, message: Message, target_show_id: Optional[str] = None):
     """
     Automated SonyLIV Downloader & Channel Uploader:
-    - Usage: /sonyliv <show_id or url> [channel_id] (or /sony)
-    - If show_id not given, prompts user interactively.
+    - Usage: /sonyliv <show_id or url or name> [channel_id] (or /sony)
+    - If show_id not given, presents popular Sony TV show catalog with 1-click buttons.
     - If channel_id not given, prompts user interactively (or /d for current chat).
-    - Fetches all seasons & episodes from SonyLIV.
-    - Downloads HLS stream, watermarks, extracts thumbnail, uploads to channel.
+    - Fetches all seasons & episodes from SonyLIV API with pagination.
+    - Downloads HLS stream, watermarks, extracts thumbnail, uploads to channel sequentially.
     - Syncs episode metadata to data/shows/sony_{show_id}.json & pushes to GitHub.
     - Real-time progress updates on both downloading and uploading.
     """
@@ -414,13 +503,13 @@ async def sonyliv_cmd(client: Client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id if message.from_user else chat_id
 
-    args = message.text.split()
-    target_show_id = None
+    args = (message.text or "").split()
     target_channel_id = None
 
-    if len(args) > 1:
-        target_show_id = extract_sony_show_id(args[1])
-    if len(args) > 2:
+    if not target_show_id and len(args) > 1:
+        target_show_id = extract_sony_show_id(" ".join(args[1:])) or extract_sony_show_id(args[1])
+
+    if len(args) > 2 and not target_channel_id:
         ch_arg = args[2].strip()
         if ch_arg.startswith("-100") or ch_arg.startswith("-"):
             target_channel_id = int(ch_arg)
@@ -435,20 +524,17 @@ async def sonyliv_cmd(client: Client, message: Message):
 
     sony = DirectSonyLIV()
 
-    # Step 1: Prompt for Show ID if not given
+    # Step 1: Prompt for Show ID if not given (Display Rich Show Catalog & Buttons)
     if not target_show_id:
-        await editable.edit_text(
-            "🎬 <b>SonyLIV High-Speed 1080p Downloader</b>\n\n"
-            "<blockquote>📌 <b>Send SonyLIV Show ID or Show URL</b>:\n"
-            "<i>Example: <code>1700000084</code> (Taarak Mehta Ka Ooltah Chashmah)\n"
-            "Or: <code>https://www.sonyliv.com/shows/taarak-mehta-ka-ooltah-chashmah-1700000084</code></i></blockquote>\n\n"
-            "<i>Send /cancel to abort.</i>",
-            parse_mode=enums.ParseMode.HTML
-        )
+        catalog_text, catalog_markup = build_sony_catalog_panel()
+        await editable.edit_text(catalog_text, reply_markup=catalog_markup, parse_mode=enums.ParseMode.HTML)
         try:
-            resp_msg = await client.listen(chat_id=chat_id, user_id=user_id, timeout=120)
+            resp_msg = await client.listen(chat_id=chat_id, user_id=user_id, timeout=180)
             text_in = resp_msg.text.strip()
-            await resp_msg.delete()
+            try:
+                await resp_msg.delete()
+            except Exception:
+                pass
             if text_in.lower() in ("/cancel", "cancel"):
                 return await editable.edit_text("❌ <b>Operation cancelled.</b>", parse_mode=enums.ParseMode.HTML)
             target_show_id = extract_sony_show_id(text_in)
@@ -456,7 +542,7 @@ async def sonyliv_cmd(client: Client, message: Message):
             return await editable.edit_text("⏱️ <b>Timeout waiting for Show ID.</b>", parse_mode=enums.ParseMode.HTML)
 
     if not target_show_id:
-        return await editable.edit_text("❌ <b>Invalid Show ID or URL. Please provide a valid SonyLIV show link or ID.</b>", parse_mode=enums.ParseMode.HTML)
+        return await editable.edit_text("❌ <b>Invalid Show ID or Name. Please select from catalog or send a valid Show ID (e.g. <code>1700000084</code>).</b>", parse_mode=enums.ParseMode.HTML)
 
     # Step 2: Prompt for Channel ID if not provided
     if not target_channel_id:
@@ -470,7 +556,10 @@ async def sonyliv_cmd(client: Client, message: Message):
         try:
             ch_msg = await client.listen(chat_id=chat_id, user_id=user_id, timeout=120)
             ch_text = ch_msg.text.strip()
-            await ch_msg.delete()
+            try:
+                await ch_msg.delete()
+            except Exception:
+                pass
             if ch_text.lower() in ("/cancel", "cancel"):
                 return await editable.edit_text("❌ <b>Operation cancelled.</b>", parse_mode=enums.ParseMode.HTML)
             target_channel_id = chat_id if ch_text == "/d" else int(ch_text)
@@ -501,7 +590,7 @@ async def sonyliv_cmd(client: Client, message: Message):
     clean_ch_id = str(target_channel_id).replace("-100", "")
 
     await editable.edit_text(
-        f"🚀 <b>SonyLIV Automation Started!</b>\n\n"
+        f"🚀 <b>SonyLIV Full Show Automation Started!</b>\n\n"
         f"🎬 <b>Show:</b> <b>{show_title}</b>\n"
         f"📚 <b>Seasons:</b> {len(seasons)}\n"
         f"📢 <b>Target Channel:</b> <code>{target_channel_id}</code>\n"
@@ -514,7 +603,7 @@ async def sonyliv_cmd(client: Client, message: Message):
     uploaded_count = 0
     skipped_count = 0
 
-    # Step 5: Iterate through all seasons and episodes
+    # Step 5: Iterate through all seasons and episodes sequentially (ek-ek karke)
     for s_idx, season in enumerate(seasons, 1):
         if _SONY_STOP_REQUESTED:
             await message.reply_text("🛑 <b>SonyLIV Batch stopped cleanly upon user request.</b>", parse_mode=enums.ParseMode.HTML)
@@ -524,7 +613,7 @@ async def sonyliv_cmd(client: Client, message: Message):
         season_title = season.get("title") or f"Season {s_idx}"
 
         try:
-            episodes = await asyncio.to_thread(sony.get_season_episodes, season_id, offset=0, limit=200)
+            episodes = await asyncio.to_thread(sony.get_all_season_episodes, season_id)
         except Exception as e:
             logger.warning(f"Failed to fetch episodes for season {season_id}: {e}")
             continue
@@ -671,10 +760,10 @@ async def sonyliv_cmd(client: Client, message: Message):
                     "uploadedAt": time.strftime("%Y-%m-%d %H:%M:%S")
                 }
 
-                # Save JSON and periodically sync to GitHub (every 5 episodes)
+                # Save JSON and periodically sync to GitHub (every 3 episodes)
                 show_obj["episodes"] = [episodes_map[k] for k in sorted(episodes_map.keys())]
                 show_obj["lastUpdated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-                if uploaded_count % 5 == 0:
+                if uploaded_count % 3 == 0:
                     await asyncio.to_thread(sync_sony_show_to_github, target_show_id, show_title, show_obj)
 
     # Final GitHub Sync
@@ -692,3 +781,24 @@ async def sonyliv_cmd(client: Client, message: Message):
         f"📢 <b>Destination Channel:</b> <code>{target_channel_id}</code>",
         parse_mode=enums.ParseMode.HTML
     )
+
+
+async def sonyliv_callback_handler(client: Client, query: CallbackQuery):
+    """Handles 1-click show selection buttons from the Sony TV catalog."""
+    data = query.data
+    if data == "sony_cancel":
+        await query.answer("Operation cancelled.")
+        try:
+            await query.message.edit_text("❌ <b>SonyLIV operation cancelled.</b>", parse_mode=enums.ParseMode.HTML)
+        except Exception:
+            pass
+        return
+
+    if data.startswith("sony_pick:"):
+        show_id = data.split(":", 1)[1]
+        await query.answer(f"Selected show ID: {show_id}")
+        msg = query.message
+        msg.from_user = query.from_user
+        msg.text = f"/sony {show_id}"
+        await sonyliv_cmd(client, msg, target_show_id=show_id)
+
