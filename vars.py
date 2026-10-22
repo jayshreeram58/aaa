@@ -196,6 +196,13 @@ PREMIUM_CHANNEL = os.environ.get("PREMIUM_CHANNEL", "")
 BOT_STATUS_CHAT_ID = os.environ.get("BOT_STATUS_CHAT_ID", "").strip().strip("'\"")
 
 # ==============================================================================
+# 🐙 GITHUB AUTOMATION & DATA REPOSITORY SYNC
+# ==============================================================================
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", "")).strip().strip("'\"")
+GITHUB_REPO = os.environ.get("GITHUB_REPO", "ramjipatel-tech/course-wallah-platform").strip().strip("'\"")
+GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip().strip("'\"")
+
+# ==============================================================================
 # 🔧 TOOLS & BINARIES
 # ==============================================================================
 FFMPEG_PATH = os.environ.get("FFMPEG_PATH", "ffmpeg")

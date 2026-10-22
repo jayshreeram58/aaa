@@ -47,6 +47,21 @@
       "value": "",
       "required": true
     },
+    "GITHUB_TOKEN": {
+      "description": "GitHub Personal Access Token (classic with 'repo' scope) to automatically push extracted batches, SonyLIV shows, and course catalogs directly to GitHub",
+      "value": "",
+      "required": false
+    },
+    "GITHUB_REPO": {
+      "description": "Target GitHub repository to receive extracted data (e.g. ramjipatel-tech/course-wallah-platform)",
+      "value": "ramjipatel-tech/course-wallah-platform",
+      "required": false
+    },
+    "GITHUB_BRANCH": {
+      "description": "Target branch for auto-pushing data",
+      "value": "main",
+      "required": false
+    },
     "ADMINS": {
       "description": "Comma-separated list of admin Telegram IDs (Optional)",
       "value": "",

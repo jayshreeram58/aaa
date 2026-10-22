@@ -20,7 +20,7 @@ LOCAL_DATA_DIR = BOT_ROOT / "data"
 SIBLING_PLATFORM_DATA = BOT_ROOT.parent / "course-wallah-platform" / "data"
 
 # GitHub synchronization configuration
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", "")).strip()
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "ramjipatel-tech/course-wallah-platform").strip()
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main").strip()
 
